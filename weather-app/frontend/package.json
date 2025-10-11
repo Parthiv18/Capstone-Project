@@ -1,0 +1,21 @@
+{
+  "name": "weather-frontend",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "axios": "^1.4.0",
+    "chart.js": "^4.4.0",
+    "react-chartjs-2": "^5.2.0"
+  },
+  "devDependencies": {
+    "vite": "^5.1.0",
+    "@vitejs/plugin-react": "^4.0.0"
+  }
+}

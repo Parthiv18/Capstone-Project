@@ -1,0 +1,123 @@
+.wd-container {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial;
+  padding: 12px;
+  max-width: 900px;
+  margin: 8px auto;
+  /* container background removed; inner card used for visuals */
+}
+
+.wd-error {
+  color: #b00020;
+}
+
+.wd-empty {
+  color: #666;
+}
+
+.wd-table-wrap {
+  overflow-x: auto;
+}
+
+.wd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.wd-table th,
+.wd-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+}
+
+.wd-table thead th {
+  background: #f7f7f7;
+  font-weight: 600;
+}
+
+.wd-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+/* Card styles for chart view */
+.wd-card {
+  background: linear-gradient(180deg, #ffffff 0%, #fbfbfd 100%);
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(40, 40, 60, 0.08);
+  padding: 18px;
+}
+
+.wd-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.wd-title {
+  margin: 0 0 4px 0;
+  font-size: 1.05rem;
+}
+.wd-sub {
+  color: #666;
+  font-size: 0.85rem;
+}
+
+.wd-current {
+  text-align: right;
+}
+.wd-current-label {
+  font-size: 0.75rem;
+  color: #777;
+}
+.wd-current-temp {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #ff5a1f;
+}
+
+.wd-chart-wrap {
+  width: 100%;
+  height: 240px;
+  border-radius: 10px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.8),
+    rgba(250, 250, 255, 0.6)
+  );
+  padding: 6px;
+}
+
+.wd-chart {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.wd-empty {
+  color: #666;
+  padding: 20px 0;
+}
+
+/* metrics inside header */
+.wd-metrics {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.wd-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.wd-metric-label {
+  font-size: 0.75rem;
+  color: #777;
+}
+.wd-metric-value {
+  font-weight: 700;
+  color: #333;
+}
