@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import List
 from datetime import datetime, timedelta, timezone
 import zoneinfo
-from api.get_weather import fetch_and_export_weather
+from api.weather_api import fetch_and_export_weather
 
 app = FastAPI()
 
