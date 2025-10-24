@@ -1,0 +1,134 @@
+.hf-backdrop {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(10, 12, 16, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.hf-card {
+  width: 420px;
+  max-width: calc(100% - 32px);
+  background: linear-gradient(180deg, #ffffff, #fffaf6);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  animation: hf-pop 0.18s ease-out;
+}
+
+@keyframes hf-pop {
+  from {
+    transform: translateY(6px) scale(0.995);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.hf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: linear-gradient(90deg, #ff7a18, #ffb347);
+  color: white;
+}
+
+.hf-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.hf-close {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.hf-body {
+  padding: 18px;
+}
+.hf-step-indicator {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.hf-step {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #eee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: #444;
+}
+.hf-step-active {
+  background: #ff7a18;
+  color: white;
+  box-shadow: 0 6px 16px rgba(255, 122, 24, 0.18);
+}
+
+.hf-field {
+  margin-bottom: 12px;
+}
+.hf-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #333;
+  font-weight: 600;
+}
+.hf-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #e6e6e6;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.hf-controls {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.hf-btn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: white;
+  cursor: pointer;
+}
+.hf-btn-ghost {
+  background: transparent;
+}
+.hf-btn-primary {
+  background: linear-gradient(90deg, #ff7a18, #ffb347);
+  color: white;
+  border: none;
+}
+
+.hf-error {
+  margin-top: 10px;
+  color: #9b1c1c;
+  background: #fff1f1;
+  padding: 8px;
+  border-radius: 6px;
+}
+.hf-success {
+  margin-top: 10px;
+  color: #08660d;
+  background: #f1fff4;
+  padding: 8px;
+  border-radius: 6px;
+}

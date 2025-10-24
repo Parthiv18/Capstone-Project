@@ -3,8 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import zoneinfo
 from api.weather_api import fetch_and_export_weather
+from api.house_api import router as house_router
 
 app = FastAPI()
 
@@ -25,6 +27,8 @@ class Coord(BaseModel):
     lon: float
 
 
+
+
 # fetch_and_export_weather moved to backend/get_weather.py
 
 @app.post("/weather")
@@ -34,6 +38,9 @@ def weather(coord: Coord):
         return out
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+app.include_router(house_router)
 
 
 @app.get("/download")
