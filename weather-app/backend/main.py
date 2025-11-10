@@ -7,6 +7,12 @@ from pathlib import Path
 import zoneinfo
 from api.weather_api import fetch_and_export_weather
 from api.house_api import router as house_router
+from api.geocode_api import router as geocode_router
+from dotenv import load_dotenv
+import os
+
+# Load .env from backend folder for local development (no-op if not present)
+load_dotenv()
 
 app = FastAPI()
 
@@ -41,6 +47,7 @@ def weather(coord: Coord):
 
 
 app.include_router(house_router)
+app.include_router(geocode_router)
 
 
 @app.get("/download")

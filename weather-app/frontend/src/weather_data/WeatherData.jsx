@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
-import { fetchWeather } from "./api";
 import "./weather.css";
 
 function formatHour(dateStr) {
@@ -18,7 +17,11 @@ function yyyyMMdd(date) {
   )}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-export default function WeatherData({ lat = 43.6532, lon = -79.3832 }) {
+export default function WeatherData({
+  lat = 43.6532,
+  lon = -79.3832,
+  serverData = null,
+}) {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState(null);
@@ -33,7 +36,19 @@ export default function WeatherData({ lat = 43.6532, lon = -79.3832 }) {
       setLoading(true);
       setError(null);
       try {
-        const data = await fetchWeather(lat, lon);
+        let data;
+        if (serverData) {
+          data = serverData;
+        } else {
+          const res = await fetch("http://localhost:8000/weather", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lat: Number(lat), lon: Number(lon) }),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          data = await res.json();
+        }
+
         if (!cancelled) {
           const r = data.rows || [];
           setRows(r);
@@ -53,7 +68,7 @@ export default function WeatherData({ lat = 43.6532, lon = -79.3832 }) {
     return () => {
       cancelled = true;
     };
-  }, [lat, lon]);
+  }, [lat, lon, serverData]);
 
   // Current hour row (closest to now)
   const now = Date.now();
@@ -66,7 +81,7 @@ export default function WeatherData({ lat = 43.6532, lon = -79.3832 }) {
         ? r
         : closest;
     }, rows[0]);
-  }, [rows]);
+  }, [rows, now]);
 
   // Build 7-day selector (today + next 6 days)
   const next7Days = useMemo(() => {

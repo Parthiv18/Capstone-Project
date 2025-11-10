@@ -27,9 +27,11 @@ def fetch_and_export_weather(
       today + next 6 days (i.e., today through today + 6).
     """
     if output_txt is None:
+        # Use generic name; file will be overwritten with new lat/lon each time
         output_txt = str(API_DIR / "data-files" / f"weather_{days_ahead}days.txt")
 
     # Setup Open-Meteo client with caching & retry
+    # Note: cache is per-process and keyed by URL+params, so different coords = different cache entry
     cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
     retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
     client = openmeteo_requests.Client(session=retry_session)

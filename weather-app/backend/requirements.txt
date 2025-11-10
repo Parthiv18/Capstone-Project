@@ -4,3 +4,4 @@ pandas==2.2.3
 requests-cache==0.9.8
 openmeteo-requests==0.0.9
 retry-requests==0.3.0
+python-dotenv==1.0.0
