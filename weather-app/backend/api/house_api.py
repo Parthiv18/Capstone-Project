@@ -21,7 +21,7 @@ def save_house_variables(vars: HouseVariables):
     """
     try:
         # backend/api -> parent = backend, write file next to backend folder
-        out_path = Path(__file__).resolve().parent / "house_variables.txt"
+        out_path = Path(__file__).resolve().parent / "data-files" / "house_variables.txt"
         lines = [f"{k}: {v}" for k, v in vars.dict().items()]
         content = "\n".join(lines) + "\n"
         with open(out_path, "w", encoding="utf-8") as f:

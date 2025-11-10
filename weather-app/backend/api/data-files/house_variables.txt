@@ -1,0 +1,5 @@
+home_size: 1000
+insulation_quality: average
+hvac_type: heat_pump
+occupancy_start: 22:22
+occupancy_end: 10:20
