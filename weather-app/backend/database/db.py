@@ -30,6 +30,8 @@ def _ensure_db():
         cur.execute("ALTER TABLE users ADD COLUMN user_weather TEXT")
     if "user_house" not in cols:
         cur.execute("ALTER TABLE users ADD COLUMN user_house TEXT")
+    if "weather_date" not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN weather_date TEXT")
     conn.commit()
     conn.close()
 
@@ -125,6 +127,32 @@ def get_user_house(username: str) -> str | None:
     conn = _get_conn()
     cur = conn.cursor()
     cur.execute("SELECT user_house FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return row[0]
+
+
+def set_user_weather_with_date(username: str, text: str, weather_date: str) -> bool:
+    """Set user weather data and the date it was fetched."""
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET user_weather = ?, weather_date = ? WHERE username = ?",
+        (text, weather_date, username),
+    )
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+    return bool(changed)
+
+
+def get_user_weather_date(username: str) -> str | None:
+    """Get the date when the user's weather data was last fetched (YYYY-MM-DD format)."""
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT weather_date FROM users WHERE username = ?", (username,))
     row = cur.fetchone()
     conn.close()
     if not row:
