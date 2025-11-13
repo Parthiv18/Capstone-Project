@@ -11,115 +11,30 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState(null);
 
-  // user-provided postal code (no hardcoded defaults)
-  const [postal, setPostal] = useState("");
-  const [activeLat, setActiveLat] = useState(null);
-  const [activeLon, setActiveLon] = useState(null);
-  const [serverData, setServerData] = useState(null);
-  const [fetching, setFetching] = useState(false);
-  const [fetchError, setFetchError] = useState(null);
+  // Weather-related state now lives inside `WeatherData` component.
 
+  // Restore login from localStorage on mount so reload doesn't log user out
   useEffect(() => {
-    const saved = localStorage.getItem("weather_user");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setLoggedIn(true);
-        setUsername(parsed.username);
-        if (parsed.postalcode) setPostal(parsed.postalcode);
-      } catch {}
-    }
-  }, []);
-
-  // Auto-fetch weather whenever the logged-in user's postal code is available
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchByPostal() {
-      if (!loggedIn) return;
-      if (!postal) return;
-      setFetching(true);
-      setFetchError(null);
-      setServerData(null);
-      try {
-        // If we have a logged-in user, try to load stored weather from their DB first
-        if (username) {
-          try {
-            const userRes = await fetch(
-              `${API_BASE}/user/weather?username=${encodeURIComponent(
-                username
-              )}`
-            );
-            if (userRes.ok) {
-              const userJson = await userRes.json();
-              if (userJson && userJson.text) {
-                try {
-                  const parsed = JSON.parse(userJson.text);
-                  if (cancelled) return;
-                  // Parsed should have same shape as fetch_and_export_weather
-                  if (parsed.lat) setActiveLat(Number(parsed.lat));
-                  if (parsed.lon) setActiveLon(Number(parsed.lon));
-                  setServerData(parsed);
-                  return; // done — used stored user weather
-                } catch (e) {
-                  // If parsing fails, fall through to fetching fresh data
-                }
-              }
-            }
-          } catch (e) {
-            // ignore and fall back to fetching
-          }
+    try {
+      const s = localStorage.getItem("weather_user");
+      if (s) {
+        const parsed = JSON.parse(s);
+        if (parsed && parsed.username) {
+          setLoggedIn(true);
+          setUsername(parsed.username);
         }
-
-        const res = await fetch(
-          `${API_BASE}/weather_postal?postal=${encodeURIComponent(
-            postal.replace(/\s+/g, "")
-          )}`
-        );
-        if (!res.ok) {
-          const txt = await res.text();
-          throw new Error(txt || res.statusText);
-        }
-        const json = await res.json();
-        if (cancelled) return;
-        if (json.lat) setActiveLat(Number(json.lat));
-        if (json.lon) setActiveLon(Number(json.lon));
-        setServerData(json);
-
-        // If user is logged in, save the JSON into their DB record for later use
-        try {
-          if (username) {
-            fetch(`${API_BASE}/user/weather`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ username, text: JSON.stringify(json) }),
-            }).catch(() => {});
-          }
-        } catch (_) {}
-      } catch (e) {
-        if (!cancelled) setFetchError(e.message || String(e));
-      } finally {
-        if (!cancelled) setFetching(false);
       }
-    }
-    fetchByPostal();
-    return () => {
-      cancelled = true;
-    };
-  }, [loggedIn, postal, username]);
+    } catch (_) {}
+  }, []);
 
   function handleLogin(info) {
     setLoggedIn(true);
     setUsername(info.username);
-    if (info.postalcode) setPostal(info.postalcode);
   }
 
   function handleLogout() {
     setLoggedIn(false);
     setUsername(null);
-    setServerData(null);
-    setPostal("");
-    setActiveLat(null);
-    setActiveLon(null);
   }
 
   if (!loggedIn) {
@@ -146,12 +61,7 @@ export default function App() {
           <Logout onLogout={handleLogout} />
         </div>
       </div>
-      <WeatherData
-        lat={activeLat}
-        lon={activeLon}
-        serverData={serverData}
-        postal={postal}
-      />
+      <WeatherData username={username} loggedIn={loggedIn} />
     </div>
   );
 }

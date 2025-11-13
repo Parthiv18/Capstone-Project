@@ -17,12 +17,17 @@ function yyyyMMdd(date) {
   )}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-export default function WeatherData({
-  lat,
-  lon,
-  serverData = null,
-  postal = null,
-}) {
+export default function WeatherData({ username, loggedIn }) {
+  const API_BASE = "http://localhost:8000";
+
+  // Weather control state (moved from App)
+  const [postal, setPostal] = useState("");
+  const [activeLat, setActiveLat] = useState(null);
+  const [activeLon, setActiveLon] = useState(null);
+  const [serverData, setServerData] = useState(null);
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState(null);
@@ -31,6 +36,93 @@ export default function WeatherData({
 
   const svgRef = useRef(null);
 
+  // initialize postal from localStorage if available
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem("weather_user");
+      if (s) {
+        const parsed = JSON.parse(s);
+        if (parsed && parsed.postalcode) setPostal(parsed.postalcode);
+      }
+    } catch (_) {}
+  }, []);
+
+  // When logged in and postal is set, resolve postal -> serverData (lat/lon + rows)
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchByPostal() {
+      if (!loggedIn) return;
+      if (!postal) return;
+      setFetching(true);
+      setFetchError(null);
+      setServerData(null);
+      try {
+        // Try to load stored weather from user's DB first
+        if (username) {
+          try {
+            const userRes = await fetch(
+              `${API_BASE}/user/weather?username=${encodeURIComponent(
+                username
+              )}`
+            );
+            if (userRes.ok) {
+              const userJson = await userRes.json();
+              if (userJson && userJson.text) {
+                try {
+                  const parsed = JSON.parse(userJson.text);
+                  if (cancelled) return;
+                  if (parsed.lat) setActiveLat(Number(parsed.lat));
+                  if (parsed.lon) setActiveLon(Number(parsed.lon));
+                  setServerData(parsed);
+                  return; // used stored user weather
+                } catch (e) {
+                  // fall through to fresh fetch
+                }
+              }
+            }
+          } catch (e) {
+            // ignore and fall back
+          }
+        }
+
+        const res = await fetch(
+          `${API_BASE}/weather_postal?postal=${encodeURIComponent(
+            postal.replace(/\s+/g, "")
+          )}`
+        );
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(txt || res.statusText);
+        }
+        const json = await res.json();
+        if (cancelled) return;
+        if (json.lat) setActiveLat(Number(json.lat));
+        if (json.lon) setActiveLon(Number(json.lon));
+        setServerData(json);
+
+        // Persist to user's DB for later use
+        try {
+          if (username) {
+            fetch(`${API_BASE}/user/weather`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username, text: JSON.stringify(json) }),
+            }).catch(() => {});
+          }
+        } catch (_) {}
+      } catch (e) {
+        if (!cancelled) setFetchError(e.message || String(e));
+      } finally {
+        if (!cancelled) setFetching(false);
+      }
+    }
+    fetchByPostal();
+    return () => {
+      cancelled = true;
+    };
+  }, [loggedIn, postal, username]);
+
+  // load detailed weather when we have coords or serverData
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -41,10 +133,17 @@ export default function WeatherData({
         if (serverData) {
           data = serverData;
         } else {
-          const res = await fetch("http://localhost:8000/weather", {
+          // require valid coords
+          if (activeLat == null || activeLon == null) {
+            throw new Error("No coordinates available to fetch weather");
+          }
+          const res = await fetch(`${API_BASE}/weather`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ lat: Number(lat), lon: Number(lon) }),
+            body: JSON.stringify({
+              lat: Number(activeLat),
+              lon: Number(activeLon),
+            }),
           });
           if (!res.ok) throw new Error(await res.text());
           data = await res.json();
@@ -53,7 +152,6 @@ export default function WeatherData({
         if (!cancelled) {
           const r = data.rows || [];
           setRows(r);
-          // default selected day = today (based on first row timezone if available)
           const now = r.length ? new Date(r[0].date) : new Date();
           const today = new Date(now);
           today.setHours(0, 0, 0, 0);
@@ -69,7 +167,7 @@ export default function WeatherData({
     return () => {
       cancelled = true;
     };
-  }, [lat, lon, serverData]);
+  }, [activeLat, activeLon, serverData]);
 
   // Current hour row (closest to now)
   const now = Date.now();
@@ -148,14 +246,9 @@ export default function WeatherData({
   function handlePointerLeave() {
     setCursorIndex(null);
   }
-  // If there is no server-provided weather and no user coords, do not attempt
-  // to render the main UI — require the user to provide a postal code or coords first.
-  if (!serverData && (lat == null || lon == null)) {
-    return (
-      <div className="wd-container wd-card">
-        Loading Data...
-      </div>
-    );
+  // If there is no server data and no coords, show a simple loading placeholder.
+  if (!serverData && (activeLat == null || activeLon == null)) {
+    return <div className="wd-container wd-card">Loading Data...</div>;
   }
 
   if (loading)
