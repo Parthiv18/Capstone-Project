@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import WeatherData from "./weather_data/WeatherData";
 import HouseForm from "./house_data/HouseForm";
-import Login from "./Login";
-import Logout from "./Logout";
+import Login from "./auth/Login";
+import Logout from "./auth/Logout";
 import "./house_data/house_form.css";
 
 const API_BASE = "http://localhost:8000";
