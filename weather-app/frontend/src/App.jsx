@@ -90,7 +90,14 @@ export default function App() {
 
   return (
     <div className="app" style={{ padding: 12 }}>
-      <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div
+        style={{
+          marginBottom: 12,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+        }}
+      >
         <div>
           <div style={{ marginBottom: 8 }}>Welcome, {username}</div>
           <div style={{ marginBottom: 12 }}>
