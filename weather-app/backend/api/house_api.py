@@ -21,15 +21,14 @@ class HouseVariables(BaseModel):
 
 @router.post("/house_variables")
 def save_house_variables(vars: HouseVariables):
-    """Save the submitted house variables to a text file in the backend/data-files folder.
+    """Save submitted house variables into the user's DB record.
 
-    Each submission is appended as a small block with a timestamp so options are preserved.
+    This endpoint now requires a `username` to be present in the request body. The
+    house variables are serialized to a small key: value text block and stored in
+    the `user_house` column of the user's row. Writing to disk is no longer performed.
     """
     try:
-        out_path = Path(__file__).resolve().parent / "data-files" / "house_variables.txt"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # write a simple key: value list (overwrite) in a stable order
+        # write a simple key: value list (stable order)
         order = [
             "home_size",
             "age_of_house",
@@ -50,18 +49,13 @@ def save_house_variables(vars: HouseVariables):
 
         content = "\n".join(lines) + "\n"
 
-        if vars.username:
-            # save into user's DB record
-            ok = db.set_user_house(vars.username, content)
-            if not ok:
-                raise HTTPException(status_code=404, detail="user not found")
-            return {"status": "ok", "saved": "db"}
+        if not vars.username:
+            raise HTTPException(status_code=400, detail="username required to save house variables")
 
-        # fallback: write the global file (existing behaviour)
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        return {"status": "ok", "file": str(out_path)}
+        ok = db.set_user_house(vars.username, content)
+        if not ok:
+            raise HTTPException(status_code=404, detail="user not found")
+        return {"status": "ok", "saved": "db"}
     except HTTPException:
         raise
     except Exception as e:

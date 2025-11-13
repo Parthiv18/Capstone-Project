@@ -1,7 +1,0 @@
-home_size: 213
-age_of_house: 123
-insulation_quality: average
-hvac_type: heat_pump
-hvac_age: 123
-personal_comfort: 25
-occupancy: hybrid

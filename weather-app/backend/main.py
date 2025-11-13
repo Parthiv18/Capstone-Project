@@ -58,9 +58,9 @@ app.include_router(user_router)
 def download(lat: float, lon: float):
     try:
         out = fetch_and_export_weather(lat, lon)
-        with open(out["file"], "rb") as f:
-            data = f.read()
-        return Response(content=data, media_type="text/plain")
+        # return the generated text directly (no disk write)
+        text = out.get("text") or ""
+        return Response(content=text, media_type="text/plain")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

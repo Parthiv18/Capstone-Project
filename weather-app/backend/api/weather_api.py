@@ -14,7 +14,6 @@ def fetch_and_export_weather(
     lon,
     tz_name="America/Toronto",
     days_ahead: int = 7,
-    output_txt: str | None = None,
 ):
     """
     Fetch hourly weather for the next `days_ahead` days (including today) and export to a text file.
@@ -26,9 +25,6 @@ def fetch_and_export_weather(
       days_ahead is the number of days to include starting today. For example days_ahead=7 returns 7 days:
       today + next 6 days (i.e., today through today + 6).
     """
-    if output_txt is None:
-        # Use generic name; file will be overwritten with new lat/lon each time
-        output_txt = str(API_DIR / "data-files" / f"weather_{days_ahead}days.txt")
 
     # Setup Open-Meteo client with caching & retry
     # Note: cache is per-process and keyed by URL+params, so different coords = different cache entry
@@ -104,14 +100,12 @@ def fetch_and_export_weather(
 
     range_df = df[(df["date"] >= today_start) & (df["date"] < range_end)].copy()
 
-    # Write human-readable text file for the full range
+    # Build a human-readable text representation in memory (do not write to disk)
     header = (
         f"Hourly weather from {today_start.date()} through {(range_end - timedelta(days=1)).date()} "
         f"(inclusive)  -- lat={lat}, lon={lon}, tz={tz_name}\n"
     )
-    with open(output_txt, "w", encoding="utf-8") as f:
-        f.write(header)
-        f.write(range_df.to_string(index=False))
+    text_content = header + range_df.to_string(index=False)
 
     # Helper to convert values to JSON-friendly types
     def as_json_val(v):
@@ -143,7 +137,9 @@ def fetch_and_export_weather(
 
     return {
         "rows": rows,
-        "file": output_txt,
+        "text": text_content,
+        "lat": lat,
+        "lon": lon,
         "start_date": today_start.date().isoformat(),
         "end_date_exclusive": range_end.date().isoformat(),
     }
