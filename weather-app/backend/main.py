@@ -79,9 +79,5 @@ if __name__ == "__main__":
             print("Warning: reload unavailable because the import string failed; starting without reload.")
             uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)
     except Exception as e:
-        print("uvicorn not available or failed to start programmatically.")
-        print("If you haven't installed dependencies, run:")
-        print("  pip install -r requirements.txt")
-        print("Then start with: uvicorn main:app --reload --port 8000 (from the backend folder)")
-        print("Or install uvicorn into your venv: pip install uvicorn[standard]")
+        print("Run: pip install -r requirements.txt")
         raise
