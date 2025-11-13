@@ -160,7 +160,7 @@ export default function Login({ onLogin }) {
       <div style={{ minWidth: 260 }}>
         <div style={{ fontSize: 12, color: "#666" }}>
           {error && <div style={{ color: "#b00020" }}>{error}</div>}
-          <p>Tip: create an account to save postal code for quicker lookups.</p>
+          <p>Don't have an account? Sign up!</p>
         </div>
       </div>
     </div>
