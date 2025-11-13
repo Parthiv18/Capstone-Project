@@ -26,7 +26,11 @@ export default function Login({ onLogin }) {
         throw new Error(txt || res.statusText);
       }
       const json = await res.json();
-      onLogin({ username: json.username, postalcode: json.postalcode });
+      const info = { username: json.username, postalcode: json.postalcode };
+      try {
+        localStorage.setItem("weather_user", JSON.stringify(info));
+      } catch (e) {}
+      onLogin(info);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -69,7 +73,11 @@ export default function Login({ onLogin }) {
         throw new Error(txt || loginRes.statusText);
       }
       const json = await loginRes.json();
-      onLogin({ username: json.username, postalcode: json.postalcode });
+      const info = { username: json.username, postalcode: json.postalcode };
+      try {
+        localStorage.setItem("weather_user", JSON.stringify(info));
+      } catch (e) {}
+      onLogin(info);
     } catch (e) {
       setError(e.message || String(e));
     } finally {

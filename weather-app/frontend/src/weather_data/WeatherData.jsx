@@ -18,8 +18,8 @@ function yyyyMMdd(date) {
 }
 
 export default function WeatherData({
-  lat = 43.6532,
-  lon = -79.3832,
+  lat,
+  lon,
   serverData = null,
   postal = null,
 }) {
@@ -147,6 +147,15 @@ export default function WeatherData({
 
   function handlePointerLeave() {
     setCursorIndex(null);
+  }
+  // If there is no server-provided weather and no user coords, do not attempt
+  // to render the main UI — require the user to provide a postal code or coords first.
+  if (!serverData && (lat == null || lon == null)) {
+    return (
+      <div className="wd-container wd-card">
+        Loading Data...
+      </div>
+    );
   }
 
   if (loading)

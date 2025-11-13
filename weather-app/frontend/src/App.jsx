@@ -11,10 +11,10 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState(null);
 
-  // switch to postal-code-driven lookup
-  const [postal, setPostal] = useState("L7A1T1");
-  const [activeLat, setActiveLat] = useState(43.716964);
-  const [activeLon, setActiveLon] = useState(-79.821611);
+  // user-provided postal code (no hardcoded defaults)
+  const [postal, setPostal] = useState("");
+  const [activeLat, setActiveLat] = useState(null);
+  const [activeLon, setActiveLon] = useState(null);
   const [serverData, setServerData] = useState(null);
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState(null);
@@ -111,17 +111,15 @@ export default function App() {
     setLoggedIn(true);
     setUsername(info.username);
     if (info.postalcode) setPostal(info.postalcode);
-    localStorage.setItem("weather_user", JSON.stringify(info));
   }
 
   function handleLogout() {
-    localStorage.removeItem("weather_user");
     setLoggedIn(false);
     setUsername(null);
     setServerData(null);
-    setPostal(null);
-    setActiveLat(43.716964);
-    setActiveLon(-79.821611);
+    setPostal("");
+    setActiveLat(null);
+    setActiveLon(null);
   }
 
   if (!loggedIn) {

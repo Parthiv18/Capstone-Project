@@ -3,7 +3,12 @@ import React from "react";
 export default function Logout({ onLogout }) {
   return (
     <button
-      onClick={() => onLogout && onLogout()}
+      onClick={() => {
+        try {
+          localStorage.removeItem("weather_user");
+        } catch (e) {}
+        if (onLogout) onLogout();
+      }}
       style={{
         background: "transparent",
         border: "1px solid #ddd",
