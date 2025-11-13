@@ -43,6 +43,7 @@ def save_user_weather(req: SaveFileRequest):
     else:
         raise HTTPException(status_code=400, detail="either file or text required")
 
+    # DB helper will serialize content to JSON when appropriate
     ok = db.set_user_weather(req.username, content)
     if not ok:
         raise HTTPException(status_code=404, detail="user not found")
@@ -53,10 +54,10 @@ def save_user_weather(req: SaveFileRequest):
 def get_user_weather(username: str):
     if not username:
         raise HTTPException(status_code=400, detail="username required")
-    txt = db.get_user_weather(username)
-    if txt is None:
+    data = db.get_user_weather(username)
+    if data is None:
         raise HTTPException(status_code=404, detail="no saved weather for user")
-    return {"text": txt}
+    return {"data": data}
 
 
 class SaveHouseRequest(BaseModel):
@@ -68,6 +69,7 @@ class SaveHouseRequest(BaseModel):
 def save_user_house(req: SaveHouseRequest):
     if not req.username or req.text is None:
         raise HTTPException(status_code=400, detail="username and text required")
+    # Store house variables as structured JSON
     ok = db.set_user_house(req.username, req.text)
     if not ok:
         raise HTTPException(status_code=404, detail="user not found")
@@ -78,7 +80,7 @@ def save_user_house(req: SaveHouseRequest):
 def get_user_house(username: str):
     if not username:
         raise HTTPException(status_code=400, detail="username required")
-    txt = db.get_user_house(username)
-    if txt is None:
+    data = db.get_user_house(username)
+    if data is None:
         raise HTTPException(status_code=404, detail="no saved house variables for user")
-    return {"text": txt}
+    return {"data": data}

@@ -64,13 +64,13 @@ def login(data: LoginModel):
                         lat = res.get("lat")
                         lon = res.get("lon")
                         if lat is not None and lon is not None:
-                            # Fetch fresh weather data
+                            # Fetch fresh weather data (structured dict) and store it
                             weather_data = fetch_and_export_weather(lat, lon, days_ahead=7)
-                            # Store it with today's date
+                            # Store the structured weather snapshot with today's date
                             db.set_user_weather_with_date(
                                 data.username,
-                                weather_data.get("text", ""),
-                                today_str
+                                weather_data,
+                                today_str,
                             )
         except Exception as e:
             # Log error but don't fail login if weather refresh fails

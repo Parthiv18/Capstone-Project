@@ -2,6 +2,7 @@ from pathlib import Path
 import sqlite3
 import hashlib
 import secrets
+import json
 
 
 DB_PATH = Path(__file__).parent / "users.db"
@@ -93,9 +94,20 @@ def get_user_postal(username: str) -> str | None:
 
 
 def set_user_weather(username: str, text: str) -> bool:
+    # Accept a Python object (dict/list) or a string. Store as JSON string.
+    if isinstance(text, (dict, list)):
+        payload = json.dumps(text)
+    else:
+        # try to interpret string as JSON, otherwise wrap as text
+        try:
+            parsed = json.loads(text)
+            payload = json.dumps(parsed)
+        except Exception:
+            payload = json.dumps({"text": str(text)})
+
     conn = _get_conn()
     cur = conn.cursor()
-    cur.execute("UPDATE users SET user_weather = ? WHERE username = ?", (text, username))
+    cur.execute("UPDATE users SET user_weather = ? WHERE username = ?", (payload, username))
     changed = cur.rowcount
     conn.commit()
     conn.close()
@@ -110,13 +122,30 @@ def get_user_weather(username: str) -> str | None:
     conn.close()
     if not row:
         return None
-    return row[0]
+    raw = row[0]
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return raw
 
 
 def set_user_house(username: str, text: str) -> bool:
+    # Store house variables as JSON. Accept dict/list or plain string.
+    if isinstance(text, (dict, list)):
+        payload = json.dumps(text)
+    else:
+        try:
+            parsed = json.loads(text)
+            payload = json.dumps(parsed)
+        except Exception:
+            # fallback: store as text field
+            payload = json.dumps({"text": str(text)})
+
     conn = _get_conn()
     cur = conn.cursor()
-    cur.execute("UPDATE users SET user_house = ? WHERE username = ?", (text, username))
+    cur.execute("UPDATE users SET user_house = ? WHERE username = ?", (payload, username))
     changed = cur.rowcount
     conn.commit()
     conn.close()
@@ -131,16 +160,58 @@ def get_user_house(username: str) -> str | None:
     conn.close()
     if not row:
         return None
-    return row[0]
+    raw = row[0]
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return raw
 
 
-def set_user_weather_with_date(username: str, text: str, weather_date: str) -> bool:
-    """Set user weather data and the date it was fetched."""
+def set_user_weather_with_date(username: str, data, weather_date: str) -> bool:
+    """Append a weather snapshot to the user's `user_weather` JSON array and set `weather_date`.
+
+    `data` may be a dict/list or a string. Stored format in `user_weather` will be a JSON
+    array of objects with keys `date` and `data`.
+    """
     conn = _get_conn()
     cur = conn.cursor()
+
+    # Load existing weather
+    cur.execute("SELECT user_weather FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    existing = None
+    if row:
+        existing = row[0]
+
+    snapshots = []
+    if existing:
+        try:
+            parsed = json.loads(existing)
+            if isinstance(parsed, list):
+                snapshots = parsed
+            else:
+                # if older value was an object, keep it as a single entry
+                snapshots = [parsed]
+        except Exception:
+            snapshots = [{"text": existing}]
+
+    # Normalize data
+    if isinstance(data, (dict, list)):
+        entry_data = data
+    else:
+        try:
+            entry_data = json.loads(data)
+        except Exception:
+            entry_data = {"text": str(data)}
+
+    snapshots.append({"date": weather_date, "data": entry_data})
+    payload = json.dumps(snapshots)
+
     cur.execute(
         "UPDATE users SET user_weather = ?, weather_date = ? WHERE username = ?",
-        (text, weather_date, username),
+        (payload, weather_date, username),
     )
     changed = cur.rowcount
     conn.commit()

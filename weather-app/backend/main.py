@@ -5,6 +5,8 @@ from typing import List
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import zoneinfo
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from api.weather_api import fetch_and_export_weather
 from api.house_api import router as house_router
 from api.geocode_api import router as geocode_router

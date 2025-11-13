@@ -28,31 +28,13 @@ def save_house_variables(vars: HouseVariables):
     the `user_house` column of the user's row. Writing to disk is no longer performed.
     """
     try:
-        # write a simple key: value list (stable order)
-        order = [
-            "home_size",
-            "age_of_house",
-            "insulation_quality",
-            "hvac_type",
-            "hvac_age",
-            "personal_comfort",
-            "occupancy",
-        ]
-
-        lines = []
-        d = vars.dict()
-        for k in order:
-            v = d.get(k)
-            if v is None:
-                continue
-            lines.append(f"{k}: {v}")
-
-        content = "\n".join(lines) + "\n"
-
+        # Store house variables as a structured JSON object in the DB
         if not vars.username:
             raise HTTPException(status_code=400, detail="username required to save house variables")
 
-        ok = db.set_user_house(vars.username, content)
+        house_obj = vars.dict()
+
+        ok = db.set_user_house(vars.username, house_obj)
         if not ok:
             raise HTTPException(status_code=404, detail="user not found")
         return {"status": "ok", "saved": "db"}
