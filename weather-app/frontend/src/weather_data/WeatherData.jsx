@@ -21,6 +21,7 @@ export default function WeatherData({
   lat = 43.6532,
   lon = -79.3832,
   serverData = null,
+  postal = null,
 }) {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
@@ -157,7 +158,9 @@ export default function WeatherData({
     <div className="wd-container wd-card">
       <div className="wd-card-header" style={{ alignItems: "flex-start" }}>
         <div style={{ flex: 1 }}>
-          <h3 className="wd-title">Hourly temperature</h3>
+          <h3 className="wd-title">
+            Hourly temperature{postal ? ` for ${postal}` : ""}
+          </h3>
 
           {/* 7-day selector (today + next 6 days) */}
           <div
