@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+from database import db
 
 router = APIRouter()
 
@@ -15,6 +16,7 @@ class HouseVariables(BaseModel):
     hvac_age: Optional[int] = None
     personal_comfort: int
     occupancy: str
+    username: Optional[str] = None
 
 
 @router.post("/house_variables")
@@ -47,9 +49,20 @@ def save_house_variables(vars: HouseVariables):
             lines.append(f"{k}: {v}")
 
         content = "\n".join(lines) + "\n"
+
+        if vars.username:
+            # save into user's DB record
+            ok = db.set_user_house(vars.username, content)
+            if not ok:
+                raise HTTPException(status_code=404, detail="user not found")
+            return {"status": "ok", "saved": "db"}
+
+        # fallback: write the global file (existing behaviour)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(content)
 
         return {"status": "ok", "file": str(out_path)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

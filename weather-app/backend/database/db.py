@@ -17,10 +17,19 @@ def _ensure_db():
             username TEXT PRIMARY KEY,
             password_hash TEXT NOT NULL,
             salt TEXT NOT NULL,
-            postalcode TEXT
+            postalcode TEXT,
+            user_weather TEXT,
+            user_house TEXT
         )
         """
     )
+    # Ensure columns exist for older DBs
+    cur.execute("PRAGMA table_info(users)")
+    cols = {row[1] for row in cur.fetchall()}  # name is at index 1
+    if "user_weather" not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN user_weather TEXT")
+    if "user_house" not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN user_house TEXT")
     conn.commit()
     conn.close()
 
@@ -74,6 +83,48 @@ def get_user_postal(username: str) -> str | None:
     conn = _get_conn()
     cur = conn.cursor()
     cur.execute("SELECT postalcode FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return row[0]
+
+
+def set_user_weather(username: str, text: str) -> bool:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET user_weather = ? WHERE username = ?", (text, username))
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+    return bool(changed)
+
+
+def get_user_weather(username: str) -> str | None:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT user_weather FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return row[0]
+
+
+def set_user_house(username: str, text: str) -> bool:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET user_house = ? WHERE username = ?", (text, username))
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+    return bool(changed)
+
+
+def get_user_house(username: str) -> str | None:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT user_house FROM users WHERE username = ?", (username,))
     row = cur.fetchone()
     conn.close()
     if not row:

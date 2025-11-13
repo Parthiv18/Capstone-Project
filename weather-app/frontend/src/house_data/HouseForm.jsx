@@ -58,10 +58,22 @@ export default function HouseForm({ onClose }) {
       // Because `None` is not valid in JS, handle hvac_age removal
       if (!payload.hvac_age) delete payload.hvac_age;
 
-      const resp = await fetch("http://127.0.0.1:8000/house_variables", {
+      const savedUser = (() => {
+        try {
+          const s = localStorage.getItem("weather_user");
+          return s ? JSON.parse(s) : null;
+        } catch {
+          return null;
+        }
+      })();
+
+      const body = { ...payload };
+      if (savedUser && savedUser.username) body.username = savedUser.username;
+
+      const resp = await fetch("http://localhost:8000/house_variables", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       });
       if (!resp.ok) {
         const txt = await resp.text();

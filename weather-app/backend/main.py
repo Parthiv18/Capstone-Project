@@ -9,6 +9,7 @@ from api.weather_api import fetch_and_export_weather
 from api.house_api import router as house_router
 from api.geocode_api import router as geocode_router
 from api.auth_api import router as auth_router
+from api.user_api import router as user_router
 from dotenv import load_dotenv
 import os
 
@@ -50,6 +51,7 @@ def weather(coord: Coord):
 app.include_router(house_router)
 app.include_router(geocode_router)
 app.include_router(auth_router)
+app.include_router(user_router)
 
 
 @app.get("/download")

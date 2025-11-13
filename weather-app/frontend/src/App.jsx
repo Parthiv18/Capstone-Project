@@ -55,6 +55,20 @@ export default function App() {
         if (json.lat) setActiveLat(Number(json.lat));
         if (json.lon) setActiveLon(Number(json.lon));
         setServerData(json);
+
+        // save the generated weather file into the user's DB record (if server produced a file path)
+        try {
+          if (username && json.file) {
+            // POST username + file path to backend user API
+            fetch(`${API_BASE}/user/weather`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username, file: json.file }),
+            }).catch((_) => {
+              // non-fatal; ignore errors here (could surface in UI later)
+            });
+          }
+        } catch (_) {}
       } catch (e) {
         if (!cancelled) setFetchError(e.message || String(e));
       } finally {
