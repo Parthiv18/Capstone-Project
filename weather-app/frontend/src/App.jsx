@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import WeatherData from "./weather_data/WeatherData";
-import HouseForm from "./house_data/HouseForm";
+import HouseForm, { HouseFormTrigger } from "./house_data/HouseForm";
 import Login from "./auth/Login";
 import Logout from "./auth/Logout";
 import "./house_data/house_form.css";
@@ -10,8 +10,6 @@ const API_BASE = "http://localhost:8000";
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState(null);
-
-  // Weather-related state now lives inside `WeatherData` component.
 
   // Restore login from localStorage on mount so reload doesn't log user out
   useEffect(() => {
@@ -63,28 +61,5 @@ export default function App() {
       </div>
       <WeatherData username={username} loggedIn={loggedIn} />
     </div>
-  );
-}
-
-function HouseFormTrigger() {
-  const [show, setShow] = useState(false);
-  return (
-    <>
-      <button
-        onClick={() => setShow(true)}
-        style={{
-          background: "linear-gradient(90deg,#ff7a18,#ffb347)",
-          color: "white",
-          border: "none",
-          padding: "10px 16px",
-          borderRadius: 10,
-          cursor: "pointer",
-          boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
-        }}
-      >
-        Enter house variables
-      </button>
-      {show && <HouseForm onClose={() => setShow(false)} />}
-    </>
   );
 }

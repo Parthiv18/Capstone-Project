@@ -88,7 +88,7 @@ export default function HouseForm({ onClose }) {
       setSubmitting(false);
     }
   }
-
+  
   return (
     <div className="hf-backdrop" onClick={onClose}>
       <div className="hf-card" onClick={(e) => e.stopPropagation()}>
@@ -279,5 +279,29 @@ export default function HouseForm({ onClose }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// A small trigger component that shows the `HouseForm` modal when clicked.
+export function HouseFormTrigger() {
+  const [show, setShow] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => setShow(true)}
+        style={{
+          background: "linear-gradient(90deg,#ff7a18,#ffb347)",
+          color: "white",
+          border: "none",
+          padding: "10px 16px",
+          borderRadius: 10,
+          cursor: "pointer",
+          boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
+        }}
+      >
+        Enter house variables
+      </button>
+      {show && <HouseForm onClose={() => setShow(false)} />}
+    </>
   );
 }
