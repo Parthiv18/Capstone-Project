@@ -9,7 +9,7 @@ import pandas as pd
 def get_db_path() -> Path:
     # users.db lives in the backend database folder of the weather-app
     base = Path(__file__).resolve().parent.parent
-    db_path = Path(r"C:\Users\Parthiv\Downloads\VS Code\School Related\Capstone Project\model\users.db")
+    db_path = base / "weather-app" / "backend" / "database" / "users.db"
     return db_path
 
 
@@ -63,34 +63,56 @@ def parse_weather(text: str) -> pd.DataFrame:
         elif isinstance(obj, list):
             rows = obj
         if rows is not None:
+            def _parse_dt(s: str):
+                if s is None:
+                    return None
+                st = str(s)
+                # try ISO first
+                try:
+                    return datetime.fromisoformat(st)
+                except Exception:
+                    pass
+                # If there's a trailing timezone abbreviation (e.g. ' EST'), strip it and parse
+                parts = st.rsplit(" ", 1)
+                if len(parts) == 2 and parts[1].isalpha():
+                    try:
+                        return datetime.strptime(parts[0], "%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        pass
+                # try with %Z (may or may not recognize abbreviation)
+                try:
+                    return datetime.strptime(st, "%Y-%m-%d %H:%M:%S %Z")
+                except Exception:
+                    pass
+                # final fallback: try without timezone
+                try:
+                    return datetime.strptime(st, "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    return None
+
             parsed = []
             for r in rows:
-                # prefer keys that contain 'temp' and 'date'
-                dt = None
-                for k in r:
-                    if "date" in k.lower():
-                        dt = r[k]
+                # prefer keys that contain 'date'
+                dt_val = None
+                for k, v in r.items():
+                    if "date" in str(k).lower():
+                        dt_val = v
                         break
-                # find a temperature-like key
+                # find a temperature-like key (e.g. 'temperature_2m')
                 temp = None
-                for k in r:
-                    if "temp" in k.lower():
+                for k, v in r.items():
+                    if "temp" in str(k).lower() or "temperature" in str(k).lower():
                         try:
-                            temp = float(r[k])
+                            temp = float(v)
                         except Exception:
                             temp = None
                         break
-                if dt is None:
+                if dt_val is None:
                     continue
-                try:
-                    dt = datetime.fromisoformat(dt)
-                except Exception:
-                    # fallback to parsing common format
-                    try:
-                        dt = datetime.strptime(dt, "%Y-%m-%d %H:%M:%S %Z")
-                    except Exception:
-                        continue
-                parsed.append({"date": dt, "temp": temp})
+                dt_parsed = _parse_dt(dt_val)
+                if dt_parsed is None:
+                    continue
+                parsed.append({"date": dt_parsed, "temp": temp})
             return pd.DataFrame(parsed)
     except Exception:
         pass
