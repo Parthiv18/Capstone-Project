@@ -1,4 +1,5 @@
 #To Start:
+    - cd weather-app
     - npm start
 If Error
 #Start Backend:
