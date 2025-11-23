@@ -1,0 +1,10 @@
+{
+  "name": "weather-app-root",
+  "private": true,
+  "scripts": {
+    "start": "concurrently \"cd backend && python main.py\" \"cd frontend && npm run dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  }
+}
