@@ -1,0 +1,126 @@
+.auth-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 50rem;
+  background-color: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(4px);
+  border-radius: 32px;
+  box-shadow: 0 20px 60px rgba(251, 146, 60, 0.15);
+  padding: 2rem;
+}
+
+.auth-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+}
+
+@media (min-width: 768px) {
+  .auth-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .auth-card {
+    padding: 3rem;
+  }
+}
+
+.auth-form-container {
+  background-color: white;
+  border: 1px solid rgba(229, 231, 235, 0.5);
+  border-radius: 24px;
+  padding: 2rem;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.auth-h2 {
+  margin-bottom: 2rem;
+  color: #111827;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.auth-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.auth-label {
+  display: block;
+  color: #374151;
+}
+
+.auth-input-wrapper {
+  position: relative;
+}
+
+.auth-input {
+  width: 100%;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  padding-top: 0.875rem;
+  padding-bottom: 0.875rem;
+  border: 1px solid #d1d5db;
+  border-radius: 16px;
+}
+
+.auth-button {
+  width: 100%;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+  border-radius: 16px;
+  cursor: pointer;
+}
+
+.signup-button {
+  background-image: linear-gradient(to right, #fb923c, #f97316);
+  color: white;
+  border: none;
+}
+
+.login-button {
+  background-color: white;
+  border: 2px solid;
+  border-image: linear-gradient(to right, #fb923c, #f97316) 1;
+}
+
+.login-button-text {
+  background-image: linear-gradient(to right, #fb923c, #f97316);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.auth-footer {
+  margin-top: 2.5rem;
+  text-align: center;
+}
+
+.auth-error-text {
+  color: #374151;
+}
+
+.auth-footer-link {
+  background-image: linear-gradient(to right, #fb923c, #f97316);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.auth-welcome-text {
+  background-image: linear-gradient(to right, #fb923c, #f97316);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

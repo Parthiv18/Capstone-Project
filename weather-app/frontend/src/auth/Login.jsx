@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import "./Login.css";
 
 const API_BASE = "http://localhost:8000";
 
@@ -86,81 +87,119 @@ export default function Login({ onLogin }) {
   }
 
   return (
-    <div style={{ display: "flex", gap: 24, padding: 20 }}>
-      <div
-        style={{
-          flex: 1,
-          border: "1px solid #ddd",
-          padding: 16,
-          borderRadius: 8,
-        }}
-      >
-        <h3>Login</h3>
-        <form onSubmit={doLogin}>
-          <div style={{ marginBottom: 8 }}>
-            <label>Username</label>
-            <input
-              value={loginUser}
-              onChange={(e) => setLoginUser(e.target.value)}
-            />
-          </div>
-          <div style={{ marginBottom: 8 }}>
-            <label>Password</label>
-            <input
-              type="password"
-              value={loginPass}
-              onChange={(e) => setLoginPass(e.target.value)}
-            />
-          </div>
-          <button type="submit" disabled={loading}>
-            {loading ? "…" : "Login"}
-          </button>
-        </form>
-      </div>
+    <div className="auth-container">
+      <div className="auth-card">
+        <div className="auth-grid">
+          {/* SIGN UP */}
+          <div className="auth-form-container">
+            <h2 className="auth-h2">Sign Up</h2>
+            <form onSubmit={doSignup} className="auth-form">
+              <div className="auth-input-group">
+                <label className="auth-label">Username</label>
+                <div className="auth-input-wrapper">
+                  <input
+                    type="text"
+                    value={signupUser}
+                    onChange={(e) => setSignupUser(e.target.value)}
+                    className="auth-input"
+                    placeholder="Enter username"
+                  />
+                </div>
+              </div>
 
-      <div
-        style={{
-          flex: 1,
-          border: "1px solid #ddd",
-          padding: 16,
-          borderRadius: 8,
-        }}
-      >
-        <h3>Sign Up</h3>
-        <form onSubmit={doSignup}>
-          <div style={{ marginBottom: 8 }}>
-            <label>Username</label>
-            <input
-              value={signupUser}
-              onChange={(e) => setSignupUser(e.target.value)}
-            />
-          </div>
-          <div style={{ marginBottom: 8 }}>
-            <label>Password</label>
-            <input
-              type="password"
-              value={signupPass}
-              onChange={(e) => setSignupPass(e.target.value)}
-            />
-          </div>
-          <div style={{ marginBottom: 8 }}>
-            <label>Postal Code</label>
-            <input
-              value={signupPostal}
-              onChange={(e) => setSignupPostal(e.target.value)}
-              placeholder="L7A1T1"
-            />
-          </div>
-          <button type="submit" disabled={loading}>
-            {loading ? "…" : "Sign Up"}
-          </button>
-        </form>
-      </div>
+              <div className="auth-input-group">
+                <label className="auth-label">Password</label>
+                <div className="auth-input-wrapper">
+                  <input
+                    type="password"
+                    value={signupPass}
+                    onChange={(e) => setSignupPass(e.target.value)}
+                    className="auth-input"
+                    placeholder="Create password"
+                  />
+                </div>
+              </div>
 
-      <div style={{ minWidth: 260 }}>
-        <div style={{ fontSize: 12, color: "#666" }}>
-          {error && <div style={{ color: "#b00020" }}>{error}</div>}
-          <p>Don't have an account? Sign up!</p>
+              <div className="auth-input-group">
+                <label className="auth-label">Postal Code</label>
+                <div className="auth-input-wrapper">
+                  <input
+                    type="text"
+                    value={signupPostal}
+                    onChange={(e) => setSignupPostal(e.target.value)}
+                    className="auth-input"
+                    placeholder="Enter postal code"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="auth-button signup-button"
+                disabled={loading}
+              >
+                {loading ? "..." : "Sign Up"}
+              </button>
+            </form>
+          </div>
+
+          {/* LOGIN */}
+          <div className="auth-form-container">
+            <h2 className="auth-h2">Login</h2>
+            <form onSubmit={doLogin} className="auth-form">
+              <div className="auth-input-group">
+                <label className="auth-label">Username</label>
+                <div className="auth-input-wrapper">
+                  <input
+                    type="text"
+                    value={loginUser}
+                    onChange={(e) => setLoginUser(e.target.value)}
+                    className="auth-input"
+                    placeholder="Enter username"
+                  />
+                </div>
+              </div>
+
+              <div className="auth-input-group">
+                <label className="auth-label">Password</label>
+                <div className="auth-input-wrapper">
+                  <input
+                    type="password"
+                    value={loginPass}
+                    onChange={(e) => setLoginPass(e.target.value)}
+                    className="auth-input"
+                    placeholder="Enter password"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="auth-button login-button"
+                disabled={loading}
+              >
+                <span className="login-button-text">
+                  {loading ? "..." : "Login"}
+                </span>
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* FOOTER */}
+        <div className="auth-footer">
+          {error ? (
+            <p className="auth-error-text">
+              {error}{" "}
+              <span className="auth-footer-link">
+                Don't have an account? Sign up!
+              </span>
+            </p>
+          ) : (
+            <p className="auth-welcome-text">
+              Welcome
+            </p>
+          )}
         </div>
       </div>
     </div>
