@@ -7,11 +7,11 @@ from pathlib import Path
 import zoneinfo
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from api.weather_api import fetch_and_export_weather
-from api.house_api import router as house_router
-from api.geocode_api import router as geocode_router
-from api.auth_api import router as auth_router
-from api.user_api import router as user_router
+from api.weather_data_api.weather_api import fetch_and_export_weather
+from api.house_data_api.house_api import router as house_router
+from api.postalcode_fetch_api.geocode_api import router as geocode_router
+from api.authentication_api.auth_api import router as auth_router
+from api.database_api.user_api import router as user_router
 from dotenv import load_dotenv
 import os
 
