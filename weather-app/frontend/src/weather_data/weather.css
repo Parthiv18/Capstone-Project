@@ -4,7 +4,7 @@
   padding: 12px;
   max-width: 900px;
   margin: 8px auto;
-  /* container background removed; inner card used for visuals */
+  border: 1px solid #f5c6c6;
 }
 
 .wd-error {
