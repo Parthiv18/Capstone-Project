@@ -1,0 +1,98 @@
+.th-container {
+  width: 100%;
+  max-width: 650px;
+  background: #fff;
+  border-radius: 20px;
+  padding: 30px 20px;
+  margin: 20px auto;
+  text-align: center;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05);
+}
+
+/* Top row */
+.th-top-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 20px;
+}
+
+.th-time {
+  font-weight: 600;
+}
+
+/* Center layout */
+.th-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.th-section {
+  flex: 1;
+}
+
+.th-label {
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.th-temp {
+  font-size: 48px;
+  font-weight: 600;
+}
+
+.th-temp.set {
+  color: #d5832e;
+}
+
+/* Divider */
+.th-divider {
+  width: 1px;
+  height: 80px;
+  background: #ddd;
+}
+
+/* +/- buttons */
+.th-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.th-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  font-size: 20px;
+  background: #f7f2eb;
+  cursor: pointer;
+}
+
+/* Heat / Cool buttons */
+.th-modes {
+  margin-top: 20px;
+}
+
+.th-mode-btn {
+  padding: 8px 20px;
+  border-radius: 20px;
+  border: none;
+  cursor: pointer;
+  background: #eee;
+  color: #555;
+  margin-right: 8px;
+}
+
+.active-heat {
+  background: #d5832e;
+  color: white;
+}
+
+.active-cool {
+  background: #1e90ff;
+  color: white;
+}

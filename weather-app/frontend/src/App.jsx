@@ -3,6 +3,9 @@ import WeatherData from "./weather_data/WeatherData";
 import HouseForm, { HouseFormTrigger } from "./house_data/HouseForm";
 import Login from "./auth/Login";
 import Logout from "./auth/Logout";
+import Thermostat from "./thermostat_data/Thermostat";
+import Alerts from "./alerts_data/Alerts"; // <— NEW
+import "./app.css"; // <— NEW layout styling
 import "./house_data/house_form.css";
 
 const API_BASE = "http://localhost:8000";
@@ -11,13 +14,12 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState(null);
 
-  // Restore login from localStorage on mount so reload doesn't log user out
   useEffect(() => {
     try {
       const s = localStorage.getItem("weather_user");
       if (s) {
         const parsed = JSON.parse(s);
-        if (parsed && parsed.username) {
+        if (parsed?.username) {
           setLoggedIn(true);
           setUsername(parsed.username);
         }
@@ -35,31 +37,28 @@ export default function App() {
     setUsername(null);
   }
 
-  if (!loggedIn) {
-    return <Login onLogin={handleLogin} />;
-  }
+  if (!loggedIn) return <Login onLogin={handleLogin} />;
 
   return (
-    <div className="app" style={{ padding: 12 }}>
-      <div
-        style={{
-          marginBottom: 12,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-        }}
-      >
+    <div className="app-container">
+      <div className="app-header">
         <div>
-          <div style={{ marginBottom: 8 }}>Welcome, {username}</div>
-          <div style={{ marginBottom: 12 }}>
-            <HouseFormTrigger />
-          </div>
+          <div className="welcome">Welcome, {username}</div>
+          <HouseFormTrigger />
         </div>
-        <div>
-          <Logout onLogout={handleLogout} />
+        <Logout onLogout={handleLogout} />
+      </div>
+
+      <div className="cards-grid">
+        <div className="left-column">
+          <WeatherData username={username} loggedIn={loggedIn} />
+        </div>
+
+        <div className="right-column">
+          <Thermostat />
+          <Alerts />
         </div>
       </div>
-      <WeatherData username={username} loggedIn={loggedIn} />
     </div>
   );
 }
