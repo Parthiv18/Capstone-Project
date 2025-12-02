@@ -14,6 +14,7 @@
   border-radius: 32px;
   box-shadow: 0 20px 60px rgba(251, 146, 60, 0.15);
   padding: 2rem;
+  border: 1px solid #89c4cd;
 }
 
 .auth-grid {
