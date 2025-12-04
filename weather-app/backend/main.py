@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from api.user_data_collection.get_weather_data_api import fetch_and_export_weather
 from api.user_data_collection.get_house_data_api import router as house_router
 from api.user_data_collection.postalcode_to_latlon import router as geocode_router
-from api.authentication_api.auth_api import router as auth_router
+from api.authentication.auth_api import router as auth_router
 # UPDATED IMPORT:
-from api.authentication_api.get_auth_user_data_api import router as user_data_router
-from api.thermostat_data_api.indoor_temp_simulation import run_simulation_step
+from api.authentication.get_auth_user_data_api import router as user_data_router
+from api.hvac_output.indoor_temp_simulation import run_simulation_step
 
 # --- App Configuration ---
 load_dotenv()
