@@ -69,7 +69,7 @@ export default function WeatherData({ username, loggedIn }) {
               const userJson = await userRes.json();
               if (userJson && userJson.data) {
                 try {
-                  const parsed = userJson.data;
+                  const parsed = JSON.parse(userJson.data);
                   if (cancelled) return;
                   if (parsed.lat) setActiveLat(Number(parsed.lat));
                   if (parsed.lon) setActiveLon(Number(parsed.lon));
