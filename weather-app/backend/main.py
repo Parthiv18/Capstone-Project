@@ -1,28 +1,32 @@
+import sys
+import os
+from pathlib import Path
+from datetime import datetime
+import zoneinfo
+
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-import zoneinfo
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from api.weather_data_api.weather_api import fetch_and_export_weather
-from api.house_data_api.house_api import router as house_router
-from api.postalcode_fetch_api.geocode_api import router as geocode_router
-from api.authentication_api.auth_api import router as auth_router
-from api.database_api.user_api import router as user_router
 from dotenv import load_dotenv
-import os
 
-# Load .env from backend folder for local development (no-op if not present)
+# --- Path Setup ---
+# Adds the parent directory to path so 'api' modules are found
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# --- API Router Imports ---
+from api.user_data_collection.get_weather_data_api import fetch_and_export_weather
+from api.user_data_collection.get_house_data_api import router as house_router
+from api.user_data_collection.postalcode_to_latlon import router as geocode_router
+from api.authentication_api.auth_api import router as auth_router
+# UPDATED IMPORT:
+from api.authentication_api.get_auth_user_data_api import router as user_data_router
+from api.thermostat_data_api.indoor_temp_simulation import run_simulation_step
+
+# --- App Configuration ---
 load_dotenv()
 
 app = FastAPI()
 
-# Allow local frontend dev server
-# letting the backend talk to the frontend, also allows cookies, auth headers, and HTTP methods
-# in production, you would lock this down to your actual frontend domain
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -31,15 +35,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# needed to collect the lat and lon from the post request
+# --- Models ---
 class Coord(BaseModel):
     lat: float
     lon: float
 
-
-
-
-# fetch_and_export_weather moved to backend/get_weather.py
+# --- Direct App Endpoints ---
 
 @app.post("/weather")
 def weather(coord: Coord):
@@ -49,35 +50,28 @@ def weather(coord: Coord):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/simulation/{username}")
+def get_simulation_step(username: str):
+    try:
+        result = run_simulation_step(username)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except Exception as e:
+        print(f"Simulation Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
+# --- Router Registration ---
 app.include_router(house_router)
 app.include_router(geocode_router)
 app.include_router(auth_router)
-app.include_router(user_router)
+app.include_router(user_data_router) # Registered the new router
 
-
-@app.get("/download")
-def download(lat: float, lon: float):
-    try:
-        out = fetch_and_export_weather(lat, lon)
-        # return the generated text directly (no disk write)
-        text = out.get("text") or ""
-        return Response(content=text, media_type="text/plain")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+# --- Entry Point ---
 if __name__ == "__main__":
-    # Simple entrypoint so you can run: python main.py
     try:
         import uvicorn
-        # server needs to start reliably with reload, even if uvicorn is not installed as a package
-        # start->import uvicorn->sucess run uvicorn or print error->try to run uvicorn from command line->success run app or print error
-        try:
-            uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
-        except ModuleNotFoundError:
-            print("Warning: reload unavailable because the import string failed; starting without reload.")
-            uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)
+        uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
     except Exception as e:
-        print("Run: pip install -r requirements.txt")
-        raise
+        print("Error starting server. Ensure uvicorn is installed.")
+        print(e)

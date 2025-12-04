@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
 import WeatherData from "./weather_componenet/WeatherData";
-import HouseForm, { HouseFormTrigger } from "./house_variable_componenet/HouseForm";
+import HouseForm, {
+  HouseFormTrigger,
+} from "./house_variable_componenet/HouseForm";
 import Login from "./authentication_componenet/Login";
 import Logout from "./authentication_componenet/Logout";
 import Thermostat from "./thermostat_componenet/Thermostat";
-import Alerts from "./alerts_componenet/Alerts"; // <— NEW
-import "./app.css"; // <— NEW layout styling
+import Alerts from "./alerts_componenet/Alerts";
+import "./app.css";
 import "./house_variable_componenet/house_form.css";
 
 const API_BASE = "http://localhost:8000";
@@ -55,7 +57,7 @@ export default function App() {
         </div>
 
         <div className="right-column">
-          <Thermostat />
+          <Thermostat username={username} />
           <Alerts />
         </div>
       </div>

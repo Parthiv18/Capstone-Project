@@ -4,7 +4,7 @@ from typing import Optional
 from database import db
 from datetime import datetime, timezone
 import zoneinfo
-from api.weather_data_api.weather_api import fetch_and_export_weather
+from api.user_data_collection.get_weather_data_api import fetch_and_export_weather
 
 router = APIRouter()
 
