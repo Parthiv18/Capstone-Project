@@ -15,8 +15,7 @@ def geocode(postal: str):
     if not postal:
         raise HTTPException(status_code=400, detail="postal query param required")
 
-    code = postal.replace(" ", "")
-    url = f"https://api.geoapify.com/v1/geocode/search?postcode={code}&format=json&apiKey={key}"
+    url = f"https://api.geoapify.com/v1/geocode/search?postcode={postal}&format=json&apiKey={key}"
     try:
         r = requests.get(url, timeout=10)
     except Exception as e:
@@ -51,8 +50,7 @@ def weather_by_postal(postal: str, days_ahead: int = 7):
     if not key:
         raise HTTPException(status_code=500, detail="Geoapify key not configured on server")
 
-    code = postal.replace(" ", "")
-    url = f"https://api.geoapify.com/v1/geocode/search?postcode={code}&format=json&apiKey={key}"
+    url = f"https://api.geoapify.com/v1/geocode/search?postcode={postal}&format=json&apiKey={key}"
     try:
         r = requests.get(url, timeout=10)
     except Exception as e:
@@ -82,7 +80,7 @@ def weather_by_postal(postal: str, days_ahead: int = 7):
 
     # attach resolved location info
     weather["postal_formatted"] = res.get("formatted")
-    weather["postal"] = code
+    weather["postal"] = postal
     weather["lat"] = lat
     weather["lon"] = lon
     return weather

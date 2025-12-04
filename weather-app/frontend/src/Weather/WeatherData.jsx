@@ -67,9 +67,9 @@ export default function WeatherData({ username, loggedIn }) {
             );
             if (userRes.ok) {
               const userJson = await userRes.json();
-              if (userJson && userJson.text) {
+              if (userJson && userJson.data) {
                 try {
-                  const parsed = JSON.parse(userJson.text);
+                  const parsed = userJson.data;
                   if (cancelled) return;
                   if (parsed.lat) setActiveLat(Number(parsed.lat));
                   if (parsed.lon) setActiveLon(Number(parsed.lon));
@@ -86,9 +86,7 @@ export default function WeatherData({ username, loggedIn }) {
         }
 
         const res = await fetch(
-          `${API_BASE}/weather_postal?postal=${encodeURIComponent(
-            postal.replace(/\s+/g, "")
-          )}`
+          `${API_BASE}/weather_postal?postal=${encodeURIComponent(postal)}`
         );
         if (!res.ok) {
           const txt = await res.text();
@@ -106,7 +104,7 @@ export default function WeatherData({ username, loggedIn }) {
             fetch(`${API_BASE}/user/weather`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ username, text: JSON.stringify(json) }),
+              body: JSON.stringify({ username, data: JSON.stringify(json) }),
             }).catch(() => {});
           }
         } catch (_) {}
