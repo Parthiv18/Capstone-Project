@@ -15,12 +15,23 @@ def _ensure_db():
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             salt TEXT NOT NULL,
             postalcode TEXT,
             user_weather TEXT,
             user_house TEXT
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_thermostat (
+            user_id INTEGER PRIMARY KEY,
+            sim_inside_temp REAL NOT NULL,
+            last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
         )
         """
     )
@@ -41,6 +52,7 @@ def _get_conn():
     _ensure_db()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -80,6 +92,17 @@ def verify_user(username: str, password: str) -> bool:
     salt = bytes.fromhex(row[1])
     computed_hash, _ = _hash_password(password, salt=salt)
     return secrets.compare_digest(computed_hash, stored_hash)
+
+
+def get_user_id(username: str) -> int | None:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return row[0]
 
 
 def get_user_postal(username: str) -> str | None:
@@ -229,3 +252,28 @@ def get_user_weather_date(username: str) -> str | None:
     if not row:
         return None
     return row[0]
+
+
+def get_simulated_temp(user_id: int):
+    """Fetches the current simulated temperature for a user."""
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT sim_inside_temp FROM user_thermostat WHERE user_id = ?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row['sim_inside_temp'] if row else None
+
+
+def update_simulated_temp(user_id: int, new_temp: float):
+    """Updates or inserts the simulated temperature."""
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO user_thermostat (user_id, sim_inside_temp, last_updated)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            sim_inside_temp = excluded.sim_inside_temp,
+            last_updated = CURRENT_TIMESTAMP
+    """, (user_id, new_temp))
+    conn.commit()
+    conn.close()

@@ -1,7 +1,7 @@
 import json
 import datetime
-from database.db import get_user_house, get_user_weather
-from database.user_thermostat_db import get_simulated_temp, update_simulated_temp
+from database.db import get_user_house, get_user_weather, get_user_id, get_simulated_temp, update_simulated_temp
+
 
 # --- Helper Functions ---
 
@@ -67,6 +67,10 @@ def run_simulation_step(username: str):
     """
     Runs the physics simulation for one hour time step using the simplified logic.
     """
+    user_id = get_user_id(username)
+    if not user_id:
+        return {"error": "User not found"}
+
     # 1. Fetch Static House Data
     house_data = get_user_house(username)
     if not house_data:
@@ -110,7 +114,7 @@ def run_simulation_step(username: str):
     # 3. Get Current Indoor State
     # If no history exists (first run), start at a standard comfortable temp (e.g. 21C)
     # or start at T_out if you prefer immediate equilibration.
-    T_in = get_simulated_temp(username)
+    T_in = get_simulated_temp(user_id)
     if T_in is None:
         T_in = 21.0
 
@@ -126,7 +130,7 @@ def run_simulation_step(username: str):
     )
 
     # 5. Update Database with the new simulated temperature
-    update_simulated_temp(username, T_next)
+    update_simulated_temp(user_id, T_next)
 
     # 6. Return result structure required by frontend
     return {
