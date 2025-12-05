@@ -9,17 +9,28 @@ export default function HouseForm({ onClose }) {
     // page 2
     hvac_type: "",
     hvac_age: "",
+    // page 4
     personal_comfort: 25,
     occupancy: "",
   });
+  const [appliances, setAppliances] = useState([]);
 
-  const [page, setPage] = useState(1); // 1=page1, 2=page2, 3=comfort, 4=done
+  const [page, setPage] = useState(1); // 1=page1, 2=page2, 3=appliances, 4=comfort, 5=done
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
   function update(key, val) {
     setData((d) => ({ ...d, [key]: val }));
+  }
+
+  function handleApplianceChange(e) {
+    const { value, checked } = e.target;
+    if (checked) {
+      setAppliances((prev) => [...prev, value]);
+    } else {
+      setAppliances((prev) => prev.filter((item) => item !== value));
+    }
   }
 
   function validatePage1() {
@@ -34,8 +45,8 @@ export default function HouseForm({ onClose }) {
     return true;
   }
 
-  function validatePage3() {
-    // personal_comfort has a default; occupancy must be selected on page 3
+  function validatePage4() {
+    // personal_comfort has a default; occupancy must be selected on page 4
     if (!data.occupancy) return false;
     return true;
   }
@@ -53,6 +64,7 @@ export default function HouseForm({ onClose }) {
         hvac_age: data.hvac_age ? Number(data.hvac_age) : null,
         personal_comfort: Number(data.personal_comfort),
         occupancy: data.occupancy,
+        appliances: appliances,
       };
 
       // Because `None` is not valid in JS, handle hvac_age removal
@@ -81,14 +93,27 @@ export default function HouseForm({ onClose }) {
       }
       const json = await resp.json();
       setSuccess(json.file || "saved");
-      setPage(4);
+      setPage(5);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
       setSubmitting(false);
     }
   }
-  
+
+  const applianceOptions = [
+    "Electric Space Heater",
+    "Portable Air Conditioner",
+    "Electric Water Heater",
+    "Gas Water Heater",
+    "Oven (Electric or Gas)",
+    "Stove / Cooktop (Electric, Gas, or Induction)",
+    "Clothes Dryer (Electric or Gas)",
+    "Washing Machine (hot water cycles)",
+    "Dishwasher (especially drying cycles)",
+    "Electric Vehicle Charger (Level 1 or Level 2)",
+  ];
+
   return (
     <div className="hf-backdrop" onClick={onClose}>
       <div className="hf-card" onClick={(e) => e.stopPropagation()}>
@@ -109,6 +134,9 @@ export default function HouseForm({ onClose }) {
             </div>
             <div className={`hf-step ${page === 3 ? "hf-step-active" : ""}`}>
               3
+            </div>
+            <div className={`hf-step ${page === 4 ? "hf-step-active" : ""}`}>
+              4
             </div>
           </div>
 
@@ -215,6 +243,42 @@ export default function HouseForm({ onClose }) {
           {page === 3 && (
             <>
               <div className="hf-field">
+                <label className="hf-label">Appliances at home</label>
+                <div className="hf-checkbox-group">
+                  {applianceOptions.map((appliance) => (
+                    <label key={appliance} className="hf-checkbox-label">
+                      <input
+                        type="checkbox"
+                        value={appliance}
+                        checked={appliances.includes(appliance)}
+                        onChange={handleApplianceChange}
+                      />
+                      {appliance}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="hf-controls">
+                <button
+                  className="hf-btn hf-btn-ghost"
+                  onClick={() => setPage(2)}
+                >
+                  Back
+                </button>
+                <button
+                  className="hf-btn hf-btn-primary"
+                  onClick={() => setPage(4)}
+                >
+                  Next
+                </button>
+              </div>
+            </>
+          )}
+
+          {page === 4 && (
+            <>
+              <div className="hf-field">
                 <label className="hf-label">Personal Comfort (°C)</label>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <input
@@ -245,14 +309,14 @@ export default function HouseForm({ onClose }) {
               <div className="hf-controls">
                 <button
                   className="hf-btn hf-btn-ghost"
-                  onClick={() => setPage(2)}
+                  onClick={() => setPage(3)}
                 >
                   Back
                 </button>
                 <button
                   className="hf-btn hf-btn-primary"
                   onClick={handleSubmit}
-                  disabled={submitting || !validatePage3()}
+                  disabled={submitting || !validatePage4()}
                 >
                   {submitting ? "Submitting..." : "Save"}
                 </button>
@@ -261,7 +325,7 @@ export default function HouseForm({ onClose }) {
             </>
           )}
 
-          {page === 4 && (
+          {page === 5 && (
             <div className="hf-success">
               <h4>Saved!</h4>
               <div>

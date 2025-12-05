@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from database import db
 
@@ -16,6 +16,7 @@ class HouseVariables(BaseModel):
     hvac_age: Optional[int] = None
     personal_comfort: int
     occupancy: str
+    appliances: Optional[List[str]] = None
     username: Optional[str] = None
 
 

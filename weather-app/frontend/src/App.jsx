@@ -50,14 +50,11 @@ export default function App() {
       </div>
 
       <div className="cards-grid">
-        <div className="left-column">
+        <div className="top-row">
           <WeatherData username={username} loggedIn={loggedIn} />
-        </div>
-
-        <div className="right-column">
           <Thermostat username={username} />
-          <Alerts />
         </div>
+        <Alerts />
       </div>
     </div>
   );
