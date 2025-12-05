@@ -44,9 +44,11 @@ export default function App() {
       <div className="app-header">
         <div>
           <div className="welcome">Welcome, {username}</div>
-          <HouseFormTrigger />
+          <div className="header-actions">
+            <HouseFormTrigger />
+            <Logout onLogout={handleLogout} />
+          </div>
         </div>
-        <Logout onLogout={handleLogout} />
       </div>
 
       <div className="cards-grid">

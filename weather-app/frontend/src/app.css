@@ -4,9 +4,21 @@
 
 .app-header {
   display: flex;
-  justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 14px;
+}
+
+.app-header > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .welcome {
