@@ -16,7 +16,7 @@ export default function HouseForm({ onClose }) {
   const [appliances, setAppliances] = useState([]);
 
   const [page, setPage] = useState(1); // 1=page1, 2=page2, 3=appliances, 4=comfort, 5=done
-  const [submitting, setSubmitting] =useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
@@ -375,7 +375,7 @@ export default function HouseForm({ onClose }) {
             <div className="hf-success">
               <h4>Saved!</h4>
               <div>
-                File: <code>{success}</code>
+                Database: <code>{success}</code>
               </div>
               <button
                 className="hf-btn hf-btn-primary"
