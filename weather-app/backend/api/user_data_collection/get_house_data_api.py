@@ -33,7 +33,10 @@ def save_house_variables(vars: HouseVariables):
         if not vars.username:
             raise HTTPException(status_code=400, detail="username required to save house variables")
 
-        house_obj = vars.dict()
+        house_obj = {
+            "data": vars.dict(exclude={"appliances", "username"}),
+            "appliances": vars.appliances,
+        }
 
         ok = db.set_user_house(vars.username, house_obj)
         if not ok:

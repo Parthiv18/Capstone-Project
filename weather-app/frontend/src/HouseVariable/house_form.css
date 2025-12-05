@@ -12,7 +12,7 @@
 }
 
 .hf-card {
-  width: 420px;
+  width: 600px;
   max-width: calc(100% - 32px);
   background: linear-gradient(180deg, #2d3748, #1a202c);
   border-radius: 12px;

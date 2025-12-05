@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 
 export default function HouseForm({ onClose }) {
   // Page 1 fields
@@ -16,9 +16,45 @@ export default function HouseForm({ onClose }) {
   const [appliances, setAppliances] = useState([]);
 
   const [page, setPage] = useState(1); // 1=page1, 2=page2, 3=appliances, 4=comfort, 5=done
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting] =useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+
+  const repopulate = useCallback(() => {
+    const savedUser = (() => {
+      try {
+        const s = localStorage.getItem("weather_user");
+        return s ? JSON.parse(s) : null;
+      } catch {
+        return null;
+      }
+    })();
+
+    if (savedUser && savedUser.username) {
+      fetch(`http://localhost:8000/user/house?username=${savedUser.username}`)
+        .then((res) => {
+          if (res.ok) return res.json();
+          return null;
+        })
+        .then((body) => {
+          console.log("body", body);
+          console.log("body.data", body.data);
+          if (!body || !body.data) return;
+          const { data: d, appliances: a } = body.data;
+          if (d)
+            setData((current) => ({
+              ...current,
+              ...d,
+            }));
+
+          if (a) setAppliances(a);
+        });
+    }
+  }, []);
+
+  useEffect(() => {
+    repopulate();
+  }, [repopulate]);
 
   function update(key, val) {
     setData((d) => ({ ...d, [key]: val }));
@@ -126,18 +162,30 @@ export default function HouseForm({ onClose }) {
 
         <div className="hf-body">
           <div className="hf-step-indicator">
-            <div className={`hf-step ${page === 1 ? "hf-step-active" : ""}`}>
+            <button
+              className={`hf-step ${page === 1 ? "hf-step-active" : ""}`}
+              onClick={() => setPage(1)}
+            >
               1
-            </div>
-            <div className={`hf-step ${page === 2 ? "hf-step-active" : ""}`}>
+            </button>
+            <button
+              className={`hf-step ${page === 2 ? "hf-step-active" : ""}`}
+              onClick={() => setPage(2)}
+            >
               2
-            </div>
-            <div className={`hf-step ${page === 3 ? "hf-step-active" : ""}`}>
+            </button>
+            <button
+              className={`hf-step ${page === 3 ? "hf-step-active" : ""}`}
+              onClick={() => setPage(3)}
+            >
               3
-            </div>
-            <div className={`hf-step ${page === 4 ? "hf-step-active" : ""}`}>
+            </button>
+            <button
+              className={`hf-step ${page === 4 ? "hf-step-active" : ""}`}
+              onClick={() => setPage(4)}
+            >
               4
-            </div>
+            </button>
           </div>
 
           {page === 1 && (
@@ -183,7 +231,6 @@ export default function HouseForm({ onClose }) {
               <div className="hf-controls">
                 <button
                   className="hf-btn hf-btn-primary"
-                  disabled={!validatePage1()}
                   onClick={() => setPage(2)}
                 >
                   Next
@@ -231,7 +278,6 @@ export default function HouseForm({ onClose }) {
                 <button
                   className="hf-btn hf-btn-primary"
                   onClick={() => setPage(3)}
-                  disabled={!validatePage2()}
                 >
                   Next
                 </button>
@@ -316,7 +362,7 @@ export default function HouseForm({ onClose }) {
                 <button
                   className="hf-btn hf-btn-primary"
                   onClick={handleSubmit}
-                  disabled={submitting || !validatePage4()}
+                  disabled={submitting}
                 >
                   {submitting ? "Submitting..." : "Save"}
                 </button>
