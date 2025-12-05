@@ -4,17 +4,18 @@
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
+  background-color: #121212;
 }
 
 .auth-card {
   width: 100%;
   max-width: 50rem;
-  background-color: rgba(255, 255, 255, 0.95);
+  background-color: rgba(30, 30, 30, 0.95);
   backdrop-filter: blur(4px);
   border-radius: 32px;
   box-shadow: 0 20px 60px rgba(251, 146, 60, 0.15);
   padding: 2rem;
-  border: 1px solid #89c4cd;
+  border: 1px solid #444;
 }
 
 .auth-grid {
@@ -33,8 +34,8 @@
 }
 
 .auth-form-container {
-  background-color: white;
-  border: 1px solid rgba(229, 231, 235, 0.5);
+  background-color: #1e1e1e;
+  border: 1px solid rgba(229, 231, 235, 0.1);
   border-radius: 24px;
   padding: 2rem;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
@@ -42,7 +43,7 @@
 
 .auth-h2 {
   margin-bottom: 2rem;
-  color: #111827;
+  color: #ffffff;
 }
 
 .auth-form {
@@ -59,7 +60,7 @@
 
 .auth-label {
   display: block;
-  color: #374151;
+  color: #a0aec0;
 }
 
 .auth-input-wrapper {
@@ -72,8 +73,10 @@
   padding-right: 1rem;
   padding-top: 0.875rem;
   padding-bottom: 0.875rem;
-  border: 1px solid #d1d5db;
+  border: 1px solid #4a5568;
   border-radius: 16px;
+  background-color: #2d3748;
+  color: #ffffff;
 }
 
 .auth-button {
@@ -91,7 +94,7 @@
 }
 
 .login-button {
-  background-color: white;
+  background-color: transparent;
   border: 2px solid;
   border-image: linear-gradient(to right, #fb923c, #f97316) 1;
 }
@@ -109,7 +112,7 @@
 }
 
 .auth-error-text {
-  color: #374151;
+  color: #a0aec0;
 }
 
 .auth-footer-link {
@@ -125,3 +128,4 @@
   background-clip: text;
   color: transparent;
 }
+

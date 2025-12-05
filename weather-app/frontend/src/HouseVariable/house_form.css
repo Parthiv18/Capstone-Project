@@ -4,7 +4,7 @@
   top: 0;
   right: 0;
   bottom: 0;
-  background: rgba(10, 12, 16, 0.45);
+  background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -14,12 +14,13 @@
 .hf-card {
   width: 420px;
   max-width: calc(100% - 32px);
-  background: linear-gradient(180deg, #ffffff, #fffaf6);
+  background: linear-gradient(180deg, #2d3748, #1a202c);
   border-radius: 12px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
   overflow: hidden;
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   animation: hf-pop 0.18s ease-out;
+  color: #ffffff;
 }
 
 @keyframes hf-pop {
@@ -66,12 +67,12 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #eee;
+  background: #4a5568;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 13px;
-  color: #444;
+  color: #e2e8f0;
 }
 .hf-step-active {
   background: #ff7a18;
@@ -85,15 +86,17 @@
 .hf-label {
   display: block;
   margin-bottom: 6px;
-  color: #333;
+  color: #a0aec0;
   font-weight: 600;
 }
 .hf-input {
   width: 100%;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid #e6e6e6;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  border: 1px solid #4a5568;
+  background-color: #2d3748;
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .hf-checkbox-group {
@@ -102,7 +105,7 @@
   gap: 8px;
   max-height: 200px;
   overflow-y: auto;
-  border: 1px solid #e6e6e6;
+  border: 1px solid #4a5568;
   border-radius: 8px;
   padding: 10px;
 }
@@ -115,10 +118,11 @@
   border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.2s;
+  color: #e2e8f0;
 }
 
 .hf-checkbox-label:hover {
-  background-color: #f5f5f5;
+  background-color: #4a5568;
 }
 
 .hf-checkbox-label input[type="checkbox"] {
@@ -135,8 +139,9 @@
 .hf-btn {
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  background: white;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #2d3748;
+  color: #ffffff;
   cursor: pointer;
 }
 .hf-btn-ghost {
@@ -150,15 +155,15 @@
 
 .hf-error {
   margin-top: 10px;
-  color: #9b1c1c;
-  background: #fff1f1;
+  color: #ffcccc;
+  background: #c53030;
   padding: 8px;
   border-radius: 6px;
 }
 .hf-success {
   margin-top: 10px;
-  color: #08660d;
-  background: #f1fff4;
+  color: #c6f6d5;
+  background: #2f855a;
   padding: 8px;
   border-radius: 6px;
 }
@@ -177,10 +182,11 @@ input[type="range"]::-webkit-slider-thumb {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: white;
+  background: #1a202c;
   border: 3px solid #ff7a18;
 }
 
 .hf-step-indicator {
   margin-bottom: 12px;
 }
+

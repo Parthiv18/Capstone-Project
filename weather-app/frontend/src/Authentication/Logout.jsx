@@ -14,6 +14,7 @@ export default function Logout({ onLogout }) {
         border: "1px solid #ddd",
         padding: "8px 12px",
         borderRadius: 8,
+        color: "white",
         cursor: "pointer",
       }}
     >

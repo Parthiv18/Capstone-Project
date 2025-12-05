@@ -1,6 +1,8 @@
 body {
   font-family: system-ui, sans-serif;
   margin: 16px;
+  background-color: #121212;
+  color: #ffffff;
 }
 .container {
   max-width: 900px;
@@ -19,6 +21,9 @@ body {
 }
 input {
   padding: 6px 8px;
+  background-color: #333333;
+  color: #ffffff;
+  border: 1px solid #555555;
 }
 table {
   width: 100%;
@@ -27,10 +32,10 @@ table {
 }
 th,
 td {
-  border: 1px solid #ddd;
+  border: 1px solid #555555;
   padding: 6px;
   text-align: left;
 }
 .error {
-  color: crimson;
+  color: #ff4d4d;
 }

@@ -1,11 +1,11 @@
 .alert-card {
-  background: #fff;
+  background: #1e1e1e;
   padding: 18px 22px;
   border-radius: 16px;
   width: 97%;
-  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
   font-size: 15px;
-  border: 1px solid #89c4cd;
+  border: 1px solid #444;
 }
 
 .alert-header {
@@ -13,7 +13,7 @@
   align-items: center;
   gap: 6px;
   font-weight: 600;
-  color: #b23b3b;
+  color: #ff6b6b;
   margin-bottom: 10px;
 }
 
@@ -22,9 +22,9 @@
 }
 
 .alert-body {
-  background: #fff3f3;
+  background: #2e2e2e;
   padding: 14px;
   border-radius: 12px;
-  color: #7a2c2c;
-  border-left: 4px solid #e68a8a;
+  color: #ffcccc;
+  border-left: 4px solid #ff6b6b;
 }
