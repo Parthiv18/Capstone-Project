@@ -11,10 +11,10 @@ export default function Logout({ onLogout }) {
       }}
       style={{
         background: "transparent",
-        border: "1px solid #ddd",
+        border: "1px solid #ffffff",
         padding: "8px 12px",
         borderRadius: 8,
-        color: "white",
+        color: "#ffffff",
         cursor: "pointer",
       }}
     >
