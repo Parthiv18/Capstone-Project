@@ -4,7 +4,6 @@ import "./thermostat.css";
 
 export default function Thermostat({ username }) {
   const [insideTemp, setInsideTemp] = useState("--");
-  const [outsideTemp, setOutsideTemp] = useState("--");
   const [hvacStatus, setHvacStatus] = useState("off");
 
   const [setTemp, setSetTemp] = useState(24);
@@ -21,7 +20,6 @@ export default function Thermostat({ username }) {
       const data = response.data;
 
       setInsideTemp(data.T_in_new);
-      setOutsideTemp(data.T_out);
       setHvacStatus(data.hvac_mode);
 
       if (data.hvac_mode === "heating") setMode("heat");
@@ -52,7 +50,6 @@ export default function Thermostat({ username }) {
       <div className="th-top-row">
         <div>{dayOfWeek}</div>
         <div className="th-time">{currentTime}</div>
-        <div>Outside {outsideTemp}°</div>
       </div>
 
       <div className="th-main">
