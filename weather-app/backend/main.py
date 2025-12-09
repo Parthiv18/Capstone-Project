@@ -9,8 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# --- Path Setup ---
-# Adds the parent directory to path so 'api' modules are found
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # --- API Router Imports ---
@@ -18,9 +16,8 @@ from api.user_data_collection.get_weather_data_api import fetch_and_export_weath
 from api.user_data_collection.get_house_data_api import router as house_router
 from api.user_data_collection.postalcode_to_latlon import router as geocode_router
 from api.authentication.auth_api import router as auth_router
-# UPDATED IMPORT:
 from api.authentication.get_auth_user_data_api import router as user_data_router
-from api.hvac_output.indoor_temp_simulation import run_simulation_step
+from api.hvac_simulation.indoor_temp_simulation import run_simulation_step
 
 # --- App Configuration ---
 load_dotenv()
@@ -35,12 +32,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Models ---
 class Coord(BaseModel):
     lat: float
     lon: float
-
-# --- Direct App Endpoints ---
 
 @app.post("/weather")
 def weather(coord: Coord):
