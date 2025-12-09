@@ -97,3 +97,18 @@
   background: #1e90ff;
   color: white;
 }
+
+.active-off {
+  background: #555;
+  color: white;
+}
+
+.active-pre-heat {
+  background: #f0a048;
+  color: white;
+}
+
+.active-pre-cool {
+  background: #64b5f6;
+  color: white;
+}

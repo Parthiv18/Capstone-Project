@@ -105,6 +105,28 @@ export default function Thermostat({ username }) {
         >
           Cool
         </button>
+        <button
+          className={`th-mode-btn ${mode === "off" ? "active-off" : ""}`}
+          onClick={() => setMode("off")}
+        >
+          Off
+        </button>
+        <button
+          className={`th-mode-btn ${
+            mode === "pre-heat" ? "active-pre-heat" : ""
+          }`}
+          onClick={() => setMode("pre-heat")}
+        >
+          Pre-heat
+        </button>
+        <button
+          className={`th-mode-btn ${
+            mode === "pre-cool" ? "active-pre-cool" : ""
+          }`}
+          onClick={() => setMode("pre-cool")}
+        >
+          Pre-cool
+        </button>
       </div>
     </div>
   );
