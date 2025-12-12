@@ -5,83 +5,116 @@ from database.db import get_user_house, get_user_weather, get_user_id, get_simul
 
 # --- Helper Functions ---
 
-def get_insulation_coefficient(quality: str) -> float:
+def get_insulation_u_value(quality: str) -> float:
     """
-    Maps a qualitative description of insulation to a heat transfer coefficient (k).
-    The coefficient represents the rate of heat transfer. A lower 'k' means
-    better insulation. The unit is roughly 'fraction of temperature difference
-    lost per hour' for a reference-sized house.
+    Map qualitative insulation descriptions to an estimated overall U-value
+    (W/m2K) for the building envelope. Lower U => better insulation.
 
-    - "excellent": Corresponds to modern, high-grade insulation. Very slow heat loss.
-    - "average": Corresponds to standard insulation found in many homes.
-    - "poor": Corresponds to little or no insulation. Rapid heat loss.
+    Values chosen are typical order-of-magnitude estimates for whole-envelope
+    heat transfer coefficients:
+      - poor: 1.2 W/m2K  (very leaky)
+      - average: 0.6 W/m2K
+      - excellent: 0.3 W/m2K (well insulated)
     """
     mapping = {
-        "poor": 0.05,
-        "average": 0.03,
-        "excellent": 0.01
+        "poor": 1.2,
+        "average": 0.6,
+        "excellent": 0.3
     }
-    return mapping.get(str(quality).lower(), 0.03)
+    return mapping.get(str(quality).lower(), 0.6)
 
 def simulate_indoor_temp(
     indoor_temp: float,
     outdoor_temp: float,
     windspeed: float,
     solar_radiation: float,
+    floor_area_m2: float,
     house_volume: float,
-    insulation_k: float
-) -> float:
+    u_value: float,
+    occupants: int = 2,
+    hvac_power_w: float = 0.0,
+    thermostat_setpoint: float | None = None,
+    timestep_s: int = 3600,
+) -> dict:
     """
-    Calculates the next hour's indoor temperature based on a simplified thermal model.
+    Lumped RC thermal model (discrete time) for one timestep.
 
-    This model considers several factors:
-    - Heat transfer due to the indoor/outdoor temperature difference.
-    - Increased heat loss from wind (convection).
-    - The house's thermal mass (larger homes change temperature slower).
-    - Heat gain from solar radiation.
-    - A small, constant internal heat gain from occupants and appliances.
+    Governing equation (power balance):
+      C * dT/dt = (T_out - T_in)/R + Q_internal + Q_solar + Q_hvac
 
-    Returns:
-        float: The predicted indoor temperature for the next hour.
+    Discrete update:
+      T_next = T_in + (dt / C) * ( (T_out - T_in)/R + Q_int + Q_solar + Q_hvac )
+
+    Units:
+      - R: K/W (derived from U-value and envelope area)
+      - C: J/K (thermal capacitance)
+      - Q_*: W
+      - dt: seconds
+
+    Returns a dict with `T_next` and component breakdown for diagnostics.
     """
-    # 1. Heat loss/gain from temperature difference (conduction/convection)
-    # This is the primary driver of temperature change, based on Newton's Law of Cooling.
-    # 'k' is the overall heat transfer coefficient, starting with the insulation value.
-    k = insulation_k
+    # --- Geometry estimates ---
+    # Envelope area: approximate walls+roof+windows as ~3x floor area
+    envelope_area_m2 = max(floor_area_m2 * 3.0, 20.0)
 
-    # 2. Wind's effect on heat loss
-    # Higher wind speed strips heat away from the building's surface faster.
-    # The divisor '50' is a tuning factor; a smaller number means wind has more impact.
-    k *= (1 + windspeed / 50)
+    # Apply wind effect: increase effective U with wind stripping
+    wind_factor = 1.0 + min(windspeed / 10.0, 1.0)
+    effective_u = u_value * wind_factor
 
-    # 3. Thermal Mass (Inertia)
-    # Larger houses (more volume) have more mass and change temperature more slowly.
-    # We model this by reducing the effective heat transfer rate.
-    # A standard 1500 sqft house has a volume of ~350 m^3. We'll use this as a reference.
-    thermal_mass_factor = max(house_volume / 350, 1)
-    k /= thermal_mass_factor
+    # Thermal resistance of envelope (K/W)
+    R_envelope = 1.0 / (effective_u * envelope_area_m2)
 
-    # Calculate the temperature change due to conduction and convection
-    delta_conduction_convection = (outdoor_temp - indoor_temp) * k
+    # --- Thermal capacitance ---
+    # Air heat capacity (approx): rho_air * volume * cp_air
+    rho_air = 1.225  # kg/m3
+    cp_air = 1005.0  # J/(kg*K)
+    C_air = house_volume * rho_air * cp_air
 
-    # 4. Solar Gain (Radiation)
-    # Sunlight shining on the house warms it up. This is proportional to the solar
-    # radiation intensity (in W/m^2). We'll assume a certain effective surface
-    # area for heat gain that is related to the house size.
-    # The '/ 1000' and other factors are for scaling and unit conversion.
-    effective_solar_area = house_volume / 10  # A rough proxy for wall/roof area
-    solar_gain_effect = (solar_radiation / 1000) * (effective_solar_area / 100) * 0.5
-    
-    # 5. Internal Heat Gain
-    # People, lights, and appliances generate a small amount of constant heat.
-    # We'll add a small, constant temperature rise, e.g., 0.05 degrees C per hour.
-    internal_gain = 0.05
+    # Building fabric thermal mass: empirical per-floor-area heat capacity (J/K)
+    # Typical values ~ 1e5 - 3e5 J/m2K; use 165000 J/m2K as compromise
+    C_building = floor_area_m2 * 165000.0
+    C_total = C_air + C_building
 
-    # 6. Calculate the final temperature for the next hour
-    # Combine the starting temperature with all the calculated changes.
-    next_temp = indoor_temp + delta_conduction_convection + solar_gain_effect + internal_gain
+    # --- Internal gains (W) ---
+    # Occupant sensible heat ~ 70-100 W each + appliances/lighting ~ 300 W
+    Q_internal = occupants * 80.0 + 300.0
 
-    return round(next_temp, 2)
+    # --- Solar gains (W) ---
+    # Use an aperture area (windows/roof) fraction of floor area
+    aperture_area = max(floor_area_m2 * 0.2, 1.0)
+    solar_transmittance = 0.7
+    Q_solar = solar_radiation * aperture_area * solar_transmittance
+
+    # --- HVAC contribution (W) ---
+    Q_hvac = 0.0
+    if hvac_power_w and thermostat_setpoint is not None:
+        # Basic thermostat: apply full available power in direction to reach setpoint
+        if indoor_temp < thermostat_setpoint:
+            Q_hvac = abs(hvac_power_w)
+        elif indoor_temp > thermostat_setpoint:
+            Q_hvac = -abs(hvac_power_w)
+
+    # Passive heat flow (W) from outdoor to indoor based on temperature diff
+    Q_envelope = (outdoor_temp - indoor_temp) / R_envelope
+
+    # Net power into thermal mass (W)
+    Q_net = Q_envelope + Q_internal + Q_solar + Q_hvac
+
+    # Temperature change
+    delta_T = (timestep_s / C_total) * Q_net
+    T_next = indoor_temp + delta_T
+
+    return {
+        "T_next": round(T_next, 2),
+        "components": {
+            "Q_envelope_W": round(Q_envelope, 1),
+            "Q_internal_W": round(Q_internal, 1),
+            "Q_solar_W": round(Q_solar, 1),
+            "Q_hvac_W": round(Q_hvac, 1),
+            "C_total_JperK": round(C_total, 1),
+            "R_envelope_KperW": round(R_envelope, 6)
+        }
+    }
 
 def run_simulation_step(username: str):
     """
@@ -99,11 +132,20 @@ def run_simulation_step(username: str):
     # Extract House Parameters
     area_sqft = float(house_data.get("home_size", 1500))
     insulation_quality = house_data.get("insulation_quality", "average")
-    
+    occupants = int(house_data.get("occupants", 2))
+    hvac_power_w = float(house_data.get("hvac_power_w", 0.0))
+    thermostat_setpoint = None
+    try:
+        thermostat_setpoint = float(house_data.get("thermostat_setpoint", "nan"))
+    except Exception:
+        thermostat_setpoint = None
+
     # Prepare parameters for the formula
-    # Convert sqft to m2 (1 sqft = 0.092903 m2) and assume 2.5m ceiling height
-    house_volume = (area_sqft * 0.092903) * 2.5
-    insulation_k = get_insulation_coefficient(insulation_quality)
+    # Convert sqft to m2 (1 sqft = 0.092903 m2) and use ceiling height if provided
+    floor_area_m2 = area_sqft * 0.092903
+    ceiling_height = float(house_data.get("ceiling_height", 2.5))
+    house_volume = floor_area_m2 * ceiling_height
+    u_value = get_insulation_u_value(insulation_quality)
 
     # 2. Fetch Dynamic Weather Data
     raw_weather_data = get_user_weather(username)
@@ -133,22 +175,29 @@ def run_simulation_step(username: str):
     if T_in is None:
         T_in = 21.0
 
-    # 4. Calculate Next Temperature using the new simplified logic
-    T_next = simulate_indoor_temp(
+    # 4. Calculate Next Temperature using the RC model
+    sim_result = simulate_indoor_temp(
         indoor_temp=T_in,
         outdoor_temp=T_out,
         windspeed=wind_speed,
         solar_radiation=solar_rad,
+        floor_area_m2=floor_area_m2,
         house_volume=house_volume,
-        insulation_k=insulation_k
+        u_value=u_value,
+        occupants=occupants,
+        hvac_power_w=hvac_power_w,
+        thermostat_setpoint=thermostat_setpoint,
+        timestep_s=3600,
     )
+    T_next = sim_result.get("T_next", round(T_in, 2))
 
     # 5. Update Database with the new simulated temperature
     update_simulated_temp(user_id, T_next)
 
-    # 6. Return result structure required by frontend
+    # 6. Return result structure required by frontend + diagnostics
     return {
         "timestamp": weather_row.get("date", "Unknown"),
         "T_in_prev": T_in,
         "T_in_new": T_next,
+        "simulation_components": sim_result.get("components", {})
     }
