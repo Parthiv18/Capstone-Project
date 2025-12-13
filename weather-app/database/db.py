@@ -19,7 +19,7 @@ def _ensure_db():
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             salt TEXT NOT NULL,
-            postalcode TEXT,
+            address TEXT,
             user_weather TEXT,
             user_house TEXT
         )
@@ -44,6 +44,8 @@ def _ensure_db():
         cur.execute("ALTER TABLE users ADD COLUMN user_house TEXT")
     if "weather_date" not in cols:
         cur.execute("ALTER TABLE users ADD COLUMN weather_date TEXT")
+    if "address" not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN address TEXT")
     conn.commit()
     conn.close()
 
@@ -63,7 +65,7 @@ def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
     return hashed.hex(), salt.hex()
 
 
-def create_user(username: str, password: str, postalcode: str | None = None) -> bool:
+def create_user(username: str, password: str, address: str | None = None) -> bool:
     conn = _get_conn()
     cur = conn.cursor()
     cur.execute("SELECT 1 FROM users WHERE username = ?", (username,))
@@ -72,8 +74,8 @@ def create_user(username: str, password: str, postalcode: str | None = None) -> 
         return False
     pw_hash, salt = _hash_password(password)
     cur.execute(
-        "INSERT INTO users (username, password_hash, salt, postalcode) VALUES (?, ?, ?, ?)",
-        (username, pw_hash, salt, postalcode),
+        "INSERT INTO users (username, password_hash, salt, address) VALUES (?, ?, ?, ?)",
+        (username, pw_hash, salt, address),
     )
     conn.commit()
     conn.close()
@@ -105,10 +107,10 @@ def get_user_id(username: str) -> int | None:
     return row[0]
 
 
-def get_user_postal(username: str) -> str | None:
+def get_user_address(username: str) -> str | None:
     conn = _get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT postalcode FROM users WHERE username = ?", (username,))
+    cur.execute("SELECT address FROM users WHERE username = ?", (username,))
     row = cur.fetchone()
     conn.close()
     if not row:

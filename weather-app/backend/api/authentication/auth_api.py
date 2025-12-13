@@ -12,7 +12,7 @@ router = APIRouter()
 class SignupModel(BaseModel):
     username: str
     password: str
-    postalcode: str
+    address: str
 
 
 class LoginModel(BaseModel):
@@ -24,9 +24,9 @@ class LoginModel(BaseModel):
 def signup(data: SignupModel):
     if not data.username or not data.password:
         raise HTTPException(status_code=400, detail="username and password required")
-    if not data.postalcode or not data.postalcode.strip():
-        raise HTTPException(status_code=400, detail="postalcode required for signup")
-    ok = db.create_user(data.username, data.password, data.postalcode.strip())
+    if not data.address or not data.address.strip():
+        raise HTTPException(status_code=400, detail="address required for signup")
+    ok = db.create_user(data.username, data.password, data.address.strip())
     if not ok:
         raise HTTPException(status_code=400, detail="username already exists")
     return {"ok": True}
@@ -39,23 +39,23 @@ def login(data: LoginModel):
     ok = db.verify_user(data.username, data.password)
     if not ok:
         raise HTTPException(status_code=401, detail="invalid username or password")
-    postal = db.get_user_postal(data.username)
+    address = db.get_user_address(data.username)
     
     # Check if weather data needs to be refreshed (different day)
     today_str = datetime.now(timezone.utc).astimezone(zoneinfo.ZoneInfo("America/Toronto")).date().isoformat()
     last_weather_date = db.get_user_weather_date(data.username)
     
-    if last_weather_date != today_str and postal:
+    if last_weather_date != today_str and address:
         # Weather data is stale or missing, refresh it
         try:
-            # Get coordinates from postal code
+            # Get coordinates from address
             import os
             key = os.environ.get("GEOAPIFY_KEY")
             if key:
-                code = postal.replace(" ", "")
-                url = f"https://api.geoapify.com/v1/geocode/search?postcode={code}&format=json&apiKey={key}"
                 import requests
-                r = requests.get(url, timeout=10)
+                # Use free-text search for address
+                params = {"text": address, "format": "json", "apiKey": key}
+                r = requests.get("https://api.geoapify.com/v1/geocode/search", params=params, timeout=10)
                 if r.status_code == 200:
                     data_geo = r.json()
                     first = data_geo.get("results", [])[:1]
@@ -76,4 +76,4 @@ def login(data: LoginModel):
             # Log error but don't fail login if weather refresh fails
             print(f"Warning: failed to refresh weather for {data.username}: {e}")
     
-    return {"ok": True, "username": data.username, "postalcode": postal}
+    return {"ok": True, "username": data.username, "address": address}

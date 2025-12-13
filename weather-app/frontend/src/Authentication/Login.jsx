@@ -8,7 +8,7 @@ export default function Login({ onLogin }) {
   const [loginPass, setLoginPass] = useState("");
   const [signupUser, setSignupUser] = useState("");
   const [signupPass, setSignupPass] = useState("");
-  const [signupPostal, setSignupPostal] = useState("");
+  const [signupAddress, setSignupAddress] = useState("");
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -27,7 +27,7 @@ export default function Login({ onLogin }) {
         throw new Error(txt || res.statusText);
       }
       const json = await res.json();
-      const info = { username: json.username, postalcode: json.postalcode };
+      const info = { username: json.username, address: json.address };
       try {
         localStorage.setItem("weather_user", JSON.stringify(info));
       } catch (e) {}
@@ -43,9 +43,9 @@ export default function Login({ onLogin }) {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    // client-side validation: require username, password, postal
-    if (!signupUser || !signupPass || !signupPostal) {
-      setError("username, password and postal code are required for signup");
+    // client-side validation: require username, password, address
+    if (!signupUser || !signupPass || !signupAddress) {
+      setError("username, password and address are required for signup");
       setLoading(false);
       return;
     }
@@ -56,7 +56,7 @@ export default function Login({ onLogin }) {
         body: JSON.stringify({
           username: signupUser,
           password: signupPass,
-          postalcode: signupPostal,
+          address: signupAddress,
         }),
       });
       if (!res.ok) {
@@ -74,7 +74,7 @@ export default function Login({ onLogin }) {
         throw new Error(txt || loginRes.statusText);
       }
       const json = await loginRes.json();
-      const info = { username: json.username, postalcode: json.postalcode };
+      const info = { username: json.username, address: json.address };
       try {
         localStorage.setItem("weather_user", JSON.stringify(info));
       } catch (e) {}
@@ -121,14 +121,14 @@ export default function Login({ onLogin }) {
               </div>
 
               <div className="auth-input-group">
-                <label className="auth-label">Postal Code</label>
+                <label className="auth-label">Address</label>
                 <div className="auth-input-wrapper">
                   <input
                     type="text"
-                    value={signupPostal}
-                    onChange={(e) => setSignupPostal(e.target.value)}
+                    value={signupAddress}
+                    onChange={(e) => setSignupAddress(e.target.value)}
                     className="auth-input"
-                    placeholder="Enter postal code"
+                    placeholder={`Format: "Street, City"`}
                   />
                 </div>
               </div>
@@ -196,9 +196,7 @@ export default function Login({ onLogin }) {
               </span>
             </p>
           ) : (
-            <p className="auth-welcome-text">
-              Welcome
-            </p>
+            <p className="auth-welcome-text">Welcome</p>
           )}
         </div>
       </div>

@@ -6,18 +6,18 @@ router = APIRouter()
 
 
 @router.get("/geocode")
-def geocode(postal: str):
-    """Resolve a postal code to { lat, lon } using Geoapify. The GEOAPIFY_KEY must be set in env."""
+def geocode(address: str):
+    """Resolve a free-text address to { lat, lon } using Geoapify. The GEOAPIFY_KEY must be set in env."""
     key = os.environ.get("GEOAPIFY_KEY")
     if not key:
         raise HTTPException(status_code=500, detail="Geoapify key not configured on server")
 
-    if not postal:
-        raise HTTPException(status_code=400, detail="postal query param required")
+    if not address:
+        raise HTTPException(status_code=400, detail="address query param required")
 
-    url = f"https://api.geoapify.com/v1/geocode/search?postcode={postal}&format=json&apiKey={key}"
+    params = {"text": address, "format": "json", "apiKey": key}
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get("https://api.geoapify.com/v1/geocode/search", params=params, timeout=10)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -27,7 +27,7 @@ def geocode(postal: str):
     data = r.json()
     first = data.get("results", [])[:1]
     if not first:
-        raise HTTPException(status_code=404, detail="no results for postal code")
+        raise HTTPException(status_code=404, detail="no results for address")
 
     res = first[0]
     lat = res.get("lat")
@@ -38,21 +38,21 @@ def geocode(postal: str):
     return {"lat": lat, "lon": lon, "formatted": res.get("formatted")}
 
 
-@router.get("/weather_postal")
-def weather_by_postal(postal: str, days_ahead: int = 7):
-    """Geocode the postal code, then fetch and return weather rows (same shape as /weather).
+@router.get("/weather_address")
+def weather_by_address(address: str, days_ahead: int = 7):
+    """Geocode the address (text), then fetch and return weather rows (same shape as /weather).
     Returns the same dict as fetch_and_export_weather.
     """
-    if not postal:
-        raise HTTPException(status_code=400, detail="postal query param required")
+    if not address:
+        raise HTTPException(status_code=400, detail="address query param required")
 
     key = os.environ.get("GEOAPIFY_KEY")
     if not key:
         raise HTTPException(status_code=500, detail="Geoapify key not configured on server")
 
-    url = f"https://api.geoapify.com/v1/geocode/search?postcode={postal}&format=json&apiKey={key}"
+    params = {"text": address, "format": "json", "apiKey": key}
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get("https://api.geoapify.com/v1/geocode/search", params=params, timeout=10)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -62,7 +62,7 @@ def weather_by_postal(postal: str, days_ahead: int = 7):
     data = r.json()
     first = data.get("results", [])[:1]
     if not first:
-        raise HTTPException(status_code=404, detail="no results for postal code")
+        raise HTTPException(status_code=404, detail="no results for address")
 
     res = first[0]
     lat = res.get("lat")
@@ -79,8 +79,8 @@ def weather_by_postal(postal: str, days_ahead: int = 7):
         raise HTTPException(status_code=502, detail=f"failed to fetch weather: {e}")
 
     # attach resolved location info
-    weather["postal_formatted"] = res.get("formatted")
-    weather["postal"] = postal
+    weather["address_formatted"] = res.get("formatted")
+    weather["address"] = address
     weather["lat"] = lat
     weather["lon"] = lon
     return weather

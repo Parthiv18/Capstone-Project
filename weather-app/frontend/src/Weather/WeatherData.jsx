@@ -21,7 +21,7 @@ export default function WeatherData({ username, loggedIn }) {
   const API_BASE = "http://localhost:8000";
 
   // Weather control state (moved from App)
-  const [postal, setPostal] = useState("");
+  const [address, setAddress] = useState("");
   const [activeLat, setActiveLat] = useState(null);
   const [activeLon, setActiveLon] = useState(null);
   const [serverData, setServerData] = useState(null);
@@ -36,23 +36,23 @@ export default function WeatherData({ username, loggedIn }) {
 
   const svgRef = useRef(null);
 
-  // initialize postal from localStorage if available
+  // initialize address from localStorage if available
   useEffect(() => {
     try {
       const s = localStorage.getItem("weather_user");
       if (s) {
         const parsed = JSON.parse(s);
-        if (parsed && parsed.postalcode) setPostal(parsed.postalcode);
+        if (parsed && parsed.address) setAddress(parsed.address);
       }
     } catch (_) {}
   }, []);
 
-  // When logged in and postal is set, resolve postal -> serverData (lat/lon + rows)
+  // When logged in and address is set, resolve address -> serverData (lat/lon + rows)
   useEffect(() => {
     let cancelled = false;
-    async function fetchByPostal() {
+    async function fetchByAddress() {
       if (!loggedIn) return;
-      if (!postal) return;
+      if (!address) return;
       setFetching(true);
       setFetchError(null);
       setServerData(null);
@@ -86,7 +86,7 @@ export default function WeatherData({ username, loggedIn }) {
         }
 
         const res = await fetch(
-          `${API_BASE}/weather_postal?postal=${encodeURIComponent(postal)}`
+          `${API_BASE}/weather_address?address=${encodeURIComponent(address)}`
         );
         if (!res.ok) {
           const txt = await res.text();
@@ -114,11 +114,11 @@ export default function WeatherData({ username, loggedIn }) {
         if (!cancelled) setFetching(false);
       }
     }
-    fetchByPostal();
+    fetchByAddress();
     return () => {
       cancelled = true;
     };
-  }, [loggedIn, postal, username]);
+  }, [loggedIn, address, username]);
 
   // load detailed weather when we have coords or serverData
   useEffect(() => {
@@ -259,7 +259,7 @@ export default function WeatherData({ username, loggedIn }) {
       <div className="wd-card-header" style={{ alignItems: "flex-start" }}>
         <div style={{ flex: 1 }}>
           <h3 className="wd-title">
-            Hourly temperature{postal ? ` for ${postal}` : ""}
+            Hourly temperature{address ? ` for ${address}` : ""}
           </h3>
 
           {/* 7-day selector (today + next 6 days) */}
