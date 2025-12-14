@@ -16,10 +16,9 @@ def fetch_and_export_weather(
     days_ahead: int = 7,
 ):
     """
-    Fetch hourly weather for the next `days_ahead` days (including today) and export to a text file.
+    Fetch hourly weather for the next `days_ahead` days (including today).
     Returns a dict with:
       - rows: list of row dicts (date in '%Y-%m-%d %H:%M:%S %Z' and numeric values or None)
-      - file: path to the exported text file
       - start_date, end_date: ISO date strings for the requested range (end_date exclusive)
     Notes:
       days_ahead is the number of days to include starting today. For example days_ahead=7 returns 7 days:
@@ -150,4 +149,3 @@ if __name__ == "__main__":
     lat = 43.716964
     lon = -79.821611
     result = fetch_and_export_weather(lat, lon, tz_name="America/Toronto", days_ahead=7)
-    print(f"Exported file: {result['file']}")
