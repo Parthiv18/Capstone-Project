@@ -86,6 +86,7 @@
   background: #2d3748;
   color: #a0aec0;
   margin-right: 8px;
+  pointer-events: none;
 }
 
 .active-heat {
