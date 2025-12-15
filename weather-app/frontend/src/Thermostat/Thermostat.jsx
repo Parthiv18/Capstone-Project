@@ -15,9 +15,7 @@ export default function Thermostat({ username }) {
       // This matches the router prefix defined in main.py (/api)
       // and the endpoint defined in user_thermostat_api.py (/simulation/{username})
       const response = await axios.get(
-        `http://localhost:8000/api/simulation/${username}?setpoint=${encodeURIComponent(
-          setTemp
-        )}`
+        `http://localhost:8000/api/simulation/${username}`
       );
       const data = response.data;
 
@@ -25,10 +23,7 @@ export default function Thermostat({ username }) {
       setHvacStatus(data.hvac_mode);
 
       if (data.hvac_mode === "heating") setMode("heat");
-      else if (data.hvac_mode === "cooling") setMode("cool");
-      else if (data.hvac_mode === "pre-heat") setMode("pre-heat");
-      else if (data.hvac_mode === "pre-cool") setMode("pre-cool");
-      else if (data.hvac_mode === "off") setMode("off");
+      if (data.hvac_mode === "cooling") setMode("cool");
     } catch (error) {
       console.error("Error fetching simulation data:", error);
     }
@@ -67,12 +62,6 @@ export default function Thermostat({ username }) {
             )}
             {hvacStatus === "cooling" && (
               <span style={{ color: "cyan" }}>Cooling...</span>
-            )}
-            {hvacStatus === "pre-heat" && (
-              <span style={{ color: "orange" }}>Pre-heating...</span>
-            )}
-            {hvacStatus === "pre-cool" && (
-              <span style={{ color: "cyan" }}>Pre-cooling...</span>
             )}
             {hvacStatus === "off" && (
               <span style={{ color: "gray" }}>Idle</span>
