@@ -71,7 +71,7 @@ def weather_by_address(address: str, days_ahead: int = 7):
         raise HTTPException(status_code=502, detail="geocoding returned no coordinates")
 
     # Import here to avoid circular imports at module import time
-    from api.user_data_collection.get_weather_data_api import fetch_and_export_weather
+    from api.user_data_collection.weather_api import fetch_and_export_weather
 
     try:
         weather = fetch_and_export_weather(lat, lon, days_ahead=days_ahead)

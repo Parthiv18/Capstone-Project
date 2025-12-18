@@ -1,3 +1,6 @@
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 import zoneinfo
@@ -20,18 +23,12 @@ def fetch_and_export_weather(
     Returns a dict with:
       - rows: list of row dicts (date in '%Y-%m-%d %H:%M:%S %Z' and numeric values or None)
       - start_date, end_date: ISO date strings for the requested range (end_date exclusive)
-    Notes:
-      days_ahead is the number of days to include starting today. For example days_ahead=7 returns 7 days:
-      today + next 6 days (i.e., today through today + 6).
     """
 
-    # Setup Open-Meteo client with caching & retry
-    # Note: cache is per-process and keyed by URL+params, so different coords = different cache entry
     cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
     retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
     client = openmeteo_requests.Client(session=retry_session)
 
-    # API request - include desired hourly variables
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
@@ -55,7 +52,6 @@ def fetch_and_export_weather(
     hourly = response.Hourly()
     vars = hourly.Variables
 
-    # Extract variables in the same order as requested above
     temperature = vars(0).ValuesAsNumpy()
     apparent_temp = vars(1).ValuesAsNumpy()
     dew_point = vars(2).ValuesAsNumpy()
@@ -66,7 +62,6 @@ def fetch_and_export_weather(
     snowfall = vars(7).ValuesAsNumpy()
     windspeed = vars(8).ValuesAsNumpy()
 
-    # Build time index (UTC -> local tz)
     times_utc = pd.date_range(
         start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
         end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
@@ -90,33 +85,28 @@ def fetch_and_export_weather(
         }
     )
 
-    # Define range: today_start (local) through today_start + days_ahead (exclusive)
     now_local = datetime.now(timezone.utc).astimezone(zoneinfo.ZoneInfo(tz_name))
     today = now_local.date()
     tz = zoneinfo.ZoneInfo(tz_name)
     today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=tz)
-    range_end = today_start + timedelta(days=days_ahead)  # exclusive
+    range_end = today_start + timedelta(days=days_ahead)
 
     range_df = df[(df["date"] >= today_start) & (df["date"] < range_end)].copy()
 
-    # Build a human-readable text representation in memory (do not write to disk)
     header = (
         f"Hourly weather from {today_start.date()} through {(range_end - timedelta(days=1)).date()} "
         f"(inclusive)  -- lat={lat}, lon={lon}, tz={tz_name}\n"
     )
     text_content = header + range_df.to_string(index=False)
 
-    # Helper to convert values to JSON-friendly types
     def as_json_val(v):
         if pd.isna(v):
             return None
         try:
             return float(v)
         except Exception:
-            # If it's already serializable (e.g., string) return as-is
             return v
 
-    # Build rows for JSON
     rows = []
     for _, r in range_df.iterrows():
         rows.append(
@@ -144,8 +134,18 @@ def fetch_and_export_weather(
     }
 
 
-if __name__ == "__main__":
-    # Example coordinates (Toronto)
-    lat = 43.716964
-    lon = -79.821611
-    result = fetch_and_export_weather(lat, lon, tz_name="America/Toronto", days_ahead=7)
+router = APIRouter()
+
+
+class Coord(BaseModel):
+    lat: float
+    lon: float
+
+
+@router.post("/weather")
+def weather(coord: Coord):
+    try:
+        out = fetch_and_export_weather(coord.lat, coord.lon)
+        return out
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

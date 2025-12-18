@@ -66,7 +66,7 @@ def login(data: LoginModel):
             if key:
                 # resolve address -> coords then fetch weather
                 import requests
-                from api.user_data_collection.get_weather_data_api import fetch_and_export_weather
+                from api.user_data_collection.weather_api import fetch_and_export_weather
 
                 params = {"text": address, "format": "json", "apiKey": key}
                 r = requests.get("https://api.geoapify.com/v1/geocode/search", params=params, timeout=10)

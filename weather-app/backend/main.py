@@ -12,9 +12,9 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # --- API Router Imports ---
-from api.user_data_collection.get_weather_data_api import fetch_and_export_weather
-from api.user_data_collection.get_house_data_api import router as house_router
+from api.user_data_collection.house_api import router as house_router
 from api.user_data_collection.address_to_latlon import router as geocode_router
+from api.user_data_collection.weather_api import router as weather_router
 from api.authentication.auth_api import router as auth_router
 from api.hvac_simulation.indoor_temp_simulation import run_simulation_step
 
@@ -31,18 +31,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class Coord(BaseModel):
-    lat: float
-    lon: float
-
-@app.post("/weather")
-def weather(coord: Coord):
-    try:
-        out = fetch_and_export_weather(coord.lat, coord.lon)
-        return out
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/api/simulation/{username}")
 def get_simulation_step(username: str):
     try:
@@ -57,6 +45,7 @@ def get_simulation_step(username: str):
 # --- Router Registration ---
 app.include_router(house_router)
 app.include_router(geocode_router)
+app.include_router(weather_router)
 app.include_router(auth_router)
 
 # --- Entry Point ---
