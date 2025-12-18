@@ -31,24 +31,21 @@ export default function HouseForm({ onClose }) {
     })();
 
     if (savedUser && savedUser.username) {
-      fetch(`http://localhost:8000/user/house?username=${savedUser.username}`)
-        .then((res) => {
-          if (res.ok) return res.json();
-          return null;
-        })
-        .then((body) => {
-          console.log("body", body);
-          console.log("body.data", body.data);
-          if (!body || !body.data) return;
-          const { data: d, appliances: a } = body.data;
-          if (d)
-            setData((current) => ({
-              ...current,
-              ...d,
-            }));
+      import("../App").then(({ Backend }) => {
+        Backend.getHouse(savedUser.username)
+          .then((body) => {
+            if (!body || !body.data) return;
+            const { data: d, appliances: a } = body.data;
+            if (d)
+              setData((current) => ({
+                ...current,
+                ...d,
+              }));
 
-          if (a) setAppliances(a);
-        });
+            if (a) setAppliances(a);
+          })
+          .catch(() => {});
+      });
     }
   }, []);
 
@@ -118,16 +115,9 @@ export default function HouseForm({ onClose }) {
       const body = { ...payload };
       if (savedUser && savedUser.username) body.username = savedUser.username;
 
-      const resp = await fetch("http://localhost:8000/house_variables", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(txt || resp.statusText);
-      }
-      const json = await resp.json();
+      // Use dynamic import of the connector to avoid circular static imports
+      const { Backend } = await import("../App");
+      const json = await Backend.saveHouse(body.username, body);
       setSuccess(json.file || "saved");
       setPage(5);
     } catch (e) {

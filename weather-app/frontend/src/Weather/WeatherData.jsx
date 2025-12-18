@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import "./weather.css";
+import { Backend } from "../App";
 
 function formatHour(dateStr) {
   try {
@@ -18,7 +19,7 @@ function yyyyMMdd(date) {
 }
 
 export default function WeatherData({ username, loggedIn }) {
-  const API_BASE = "http://localhost:8000";
+  // const API_BASE = "http://localhost:8000"
 
   // Weather control state (moved from App)
   const [address, setAddress] = useState("");
@@ -60,24 +61,17 @@ export default function WeatherData({ username, loggedIn }) {
         // Try to load stored weather from user's DB first
         if (username) {
           try {
-            const userRes = await fetch(
-              `${API_BASE}/user/weather?username=${encodeURIComponent(
-                username
-              )}`
-            );
-            if (userRes.ok) {
-              const userJson = await userRes.json();
-              if (userJson && userJson.data) {
-                try {
-                  const parsed = JSON.parse(userJson.data);
-                  if (cancelled) return;
-                  if (parsed.lat) setActiveLat(Number(parsed.lat));
-                  if (parsed.lon) setActiveLon(Number(parsed.lon));
-                  setServerData(parsed);
-                  return; // used stored user weather
-                } catch (e) {
-                  // fall through to fresh fetch
-                }
+            const userJson = await Backend.getUserWeather(username);
+            if (userJson && userJson.data) {
+              try {
+                const parsed = JSON.parse(userJson.data);
+                if (cancelled) return;
+                if (parsed.lat) setActiveLat(Number(parsed.lat));
+                if (parsed.lon) setActiveLon(Number(parsed.lon));
+                setServerData(parsed);
+                return; // used stored user weather
+              } catch (e) {
+                // fall through to fresh fetch
               }
             }
           } catch (e) {
@@ -85,14 +79,7 @@ export default function WeatherData({ username, loggedIn }) {
           }
         }
 
-        const res = await fetch(
-          `${API_BASE}/weather_address?address=${encodeURIComponent(address)}`
-        );
-        if (!res.ok) {
-          const txt = await res.text();
-          throw new Error(txt || res.statusText);
-        }
-        const json = await res.json();
+        const json = await Backend.weatherByAddress(address);
         if (cancelled) return;
         if (json.lat) setActiveLat(Number(json.lat));
         if (json.lon) setActiveLon(Number(json.lon));
@@ -101,11 +88,9 @@ export default function WeatherData({ username, loggedIn }) {
         // Persist to user's DB for later use
         try {
           if (username) {
-            fetch(`${API_BASE}/user/weather`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ username, data: JSON.stringify(json) }),
-            }).catch(() => {});
+            Backend.saveUserWeather(username, JSON.stringify(json)).catch(
+              () => {}
+            );
           }
         } catch (_) {}
       } catch (e) {

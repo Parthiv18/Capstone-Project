@@ -16,7 +16,6 @@ from api.user_data_collection.get_weather_data_api import fetch_and_export_weath
 from api.user_data_collection.get_house_data_api import router as house_router
 from api.user_data_collection.address_to_latlon import router as geocode_router
 from api.authentication.auth_api import router as auth_router
-from api.authentication.get_auth_user_data_api import router as user_data_router
 from api.hvac_simulation.indoor_temp_simulation import run_simulation_step
 
 # --- App Configuration ---
@@ -59,7 +58,6 @@ def get_simulation_step(username: str):
 app.include_router(house_router)
 app.include_router(geocode_router)
 app.include_router(auth_router)
-app.include_router(user_data_router) # Registered the new router
 
 # --- Entry Point ---
 if __name__ == "__main__":

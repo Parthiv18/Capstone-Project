@@ -279,3 +279,34 @@ def update_simulated_temp(user_id: int, new_temp: float):
     """, (user_id, new_temp))
     conn.commit()
     conn.close()
+
+
+# ----------------------------
+# Connector helpers
+# ----------------------------
+def get_user_state(username: str):
+    """Return a unified dict containing user id, address, house, weather, weather_date and simulated temp.
+
+    This acts as a small "DB connector" so callers can fetch related user data via one call.
+    """
+    user_id = get_user_id(username)
+    if user_id is None:
+        return None
+    return {
+        "id": user_id,
+        "address": get_user_address(username),
+        "house": get_user_house(username),
+        "weather": get_user_weather(username),
+        "weather_date": get_user_weather_date(username),
+        "simulated_temp": get_simulated_temp(user_id),
+    }
+
+
+def save_user_weather(username: str, data) -> bool:
+    """Convenience wrapper to save (dict/str) weather for a user."""
+    return set_user_weather(username, data)
+
+
+def save_user_house(username: str, data) -> bool:
+    """Convenience wrapper to save house variables for a user."""
+    return set_user_house(username, data)

@@ -10,6 +10,81 @@ import "./app.css";
 
 const API_BASE = "http://localhost:8000";
 
+// Frontend connector: centralized backend API methods
+export const Backend = {
+  async login(username, password) {
+    const res = await fetch(`${API_BASE}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async signup(username, password, address) {
+    const res = await fetch(`${API_BASE}/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, address }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async weatherByAddress(address) {
+    const res = await fetch(
+      `${API_BASE}/weather_address?address=${encodeURIComponent(address)}`
+    );
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async getUserWeather(username) {
+    const res = await fetch(
+      `${API_BASE}/user/weather?username=${encodeURIComponent(username)}`
+    );
+    if (!res.ok) return null;
+    return res.json();
+  },
+
+  async saveUserWeather(username, data) {
+    const res = await fetch(`${API_BASE}/user/weather`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, data }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async saveHouse(username, data) {
+    const res = await fetch(`${API_BASE}/user/house`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, data }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async getHouse(username) {
+    const res = await fetch(
+      `${API_BASE}/user/house?username=${encodeURIComponent(username)}`
+    );
+    if (!res.ok) return null;
+    return res.json();
+  },
+
+  async getSimulation(username) {
+    const res = await fetch(
+      `${API_BASE}/api/simulation/${encodeURIComponent(username)}`
+    );
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+};
+
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState(null);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import axios from "axios";
+import { Backend } from "../App";
 import "./thermostat.css";
 
 export default function Thermostat({ username }) {
@@ -12,12 +12,7 @@ export default function Thermostat({ username }) {
   const fetchSimulationData = async () => {
     if (!username) return;
     try {
-      // This matches the router prefix defined in main.py (/api)
-      // and the endpoint defined in user_thermostat_api.py (/simulation/{username})
-      const response = await axios.get(
-        `http://localhost:8000/api/simulation/${username}`
-      );
-      const data = response.data;
+      const data = await Backend.getSimulation(username);
 
       setInsideTemp(data.T_in_new);
       setHvacStatus(data.hvac_mode);

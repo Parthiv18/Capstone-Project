@@ -1,8 +1,5 @@
 from database.db import (
-    get_user_house,
-    get_user_weather,
-    get_user_id,
-    get_simulated_temp,
+    get_user_state,
     update_simulated_temp,
 )
 
@@ -65,14 +62,14 @@ def run_simulation_step(username: str):
     # -------------------------------------------------
     # 1. User
     # -------------------------------------------------
-    user_id = get_user_id(username)
-    if user_id is None:
+    state = get_user_state(username)
+    if state is None:
         return {"error": "User not found"}
 
     # -------------------------------------------------
     # 2. House Data (NO DEFAULTS)
     # -------------------------------------------------
-    house = get_user_house(username)
+    house = state.get("house")
     if not house:
         return {"error": "House data missing"}
     # Frontend stores the house payload as {"data": {...}, "appliances": [...]}.
@@ -92,7 +89,7 @@ def run_simulation_step(username: str):
     # -------------------------------------------------
     # 3. Weather Data (NO DEFAULTS)
     # -------------------------------------------------
-    raw_weather = get_user_weather(username)
+    raw_weather = state.get("weather")
     if not raw_weather:
         return {"error": "Weather data missing"}
 
@@ -114,7 +111,7 @@ def run_simulation_step(username: str):
     # -------------------------------------------------
     # 4. Indoor Temperature (NO DEFAULT)
     # -------------------------------------------------
-    indoor_temp = get_simulated_temp(user_id)
+    indoor_temp = state.get("simulated_temp")
     if indoor_temp is None:
         return {"error": "Indoor temperature not initialized"}
 
@@ -133,6 +130,7 @@ def run_simulation_step(username: str):
     # -------------------------------------------------
     # 6. Save
     # -------------------------------------------------
+    user_id = state.get("id")
     update_simulated_temp(user_id, new_temp)
 
     # -------------------------------------------------

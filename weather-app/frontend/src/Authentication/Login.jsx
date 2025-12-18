@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import "./Login.css";
-
-const API_BASE = "http://localhost:8000";
+import { Backend } from "../App";
 
 export default function Login({ onLogin }) {
   const [loginUser, setLoginUser] = useState("");
@@ -17,16 +16,7 @@ export default function Login({ onLogin }) {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: loginUser, password: loginPass }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || res.statusText);
-      }
-      const json = await res.json();
+      const json = await Backend.login(loginUser, loginPass);
       const info = { username: json.username, address: json.address };
       try {
         localStorage.setItem("weather_user", JSON.stringify(info));
@@ -50,30 +40,9 @@ export default function Login({ onLogin }) {
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: signupUser,
-          password: signupPass,
-          address: signupAddress,
-        }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || res.statusText);
-      }
+      await Backend.signup(signupUser, signupPass, signupAddress);
       // auto-login after signup
-      const loginRes = await fetch(`${API_BASE}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: signupUser, password: signupPass }),
-      });
-      if (!loginRes.ok) {
-        const txt = await loginRes.text();
-        throw new Error(txt || loginRes.statusText);
-      }
-      const json = await loginRes.json();
+      const json = await Backend.login(signupUser, signupPass);
       const info = { username: json.username, address: json.address };
       try {
         localStorage.setItem("weather_user", JSON.stringify(info));
