@@ -20,6 +20,52 @@ export default function HouseForm({ onClose }) {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
+  function normalizeIncomingHouse(raw) {
+    if (!raw || typeof raw !== "object") return null;
+
+    // Support two shapes:
+    // 1) Current: { home_size, ..., appliances }
+    // 2) Legacy:  { data: { home_size, ... }, appliances }
+    const merged =
+      raw.data && typeof raw.data === "object"
+        ? { ...raw.data, appliances: raw.appliances }
+        : raw;
+
+    const {
+      home_size,
+      age_of_house,
+      insulation_quality,
+      hvac_type,
+      hvac_age,
+      personal_comfort,
+      occupancy,
+      appliances,
+    } = merged;
+
+    const normalized = {
+      home_size:
+        home_size === undefined || home_size === null ? "" : String(home_size),
+      age_of_house:
+        age_of_house === undefined || age_of_house === null
+          ? ""
+          : String(age_of_house),
+      insulation_quality: insulation_quality ?? "",
+      hvac_type: hvac_type ?? "",
+      hvac_age:
+        hvac_age === undefined || hvac_age === null ? "" : String(hvac_age),
+      personal_comfort:
+        personal_comfort === undefined || personal_comfort === null
+          ? 25
+          : Number(personal_comfort),
+      occupancy: occupancy ?? "",
+    };
+
+    return {
+      data: normalized,
+      appliances: Array.isArray(appliances) ? appliances : [],
+    };
+  }
+
   const repopulate = useCallback(() => {
     const savedUser = (() => {
       try {
@@ -35,14 +81,13 @@ export default function HouseForm({ onClose }) {
         Backend.getHouse(savedUser.username)
           .then((body) => {
             if (!body || !body.data) return;
-            const { data: d, appliances: a } = body.data;
-            if (d)
-              setData((current) => ({
-                ...current,
-                ...d,
-              }));
-
-            if (a) setAppliances(a);
+            const normalized = normalizeIncomingHouse(body.data);
+            if (!normalized) return;
+            setData((current) => ({
+              ...current,
+              ...normalized.data,
+            }));
+            setAppliances(normalized.appliances);
           })
           .catch(() => {});
       });
@@ -112,12 +157,12 @@ export default function HouseForm({ onClose }) {
         }
       })();
 
-      const body = { ...payload };
-      if (savedUser && savedUser.username) body.username = savedUser.username;
+      const username = savedUser?.username;
+      if (!username) throw new Error("Not logged in");
 
       // Use dynamic import of the connector to avoid circular static imports
       const { Backend } = await import("../App");
-      const json = await Backend.saveHouse(body.username, body);
+      const json = await Backend.saveHouse(username, payload);
       setSuccess(json.file || "saved");
       setPage(5);
     } catch (e) {
