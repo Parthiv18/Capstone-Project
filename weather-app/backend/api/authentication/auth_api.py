@@ -1,17 +1,28 @@
+"""
+Authentication API Routes
+Handles user signup, login, and user data management.
+"""
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, Any, Dict, Union
-from database import db
+from typing import Any, Dict, Union
 from datetime import datetime, timezone
 import zoneinfo
 import os
 
-# fetch weather function imported lazily where needed to avoid circular imports
+from database import db
 
-router = APIRouter()
+# ============================================================
+# Constants
+# ============================================================
 
+TIMEZONE = "America/Toronto"
+GEOAPIFY_URL = "https://api.geoapify.com/v1/geocode/search"
 
-# --- Request models ---
+# ============================================================
+# Request Models
+# ============================================================
+
 class SignupModel(BaseModel):
     username: str
     password: str
@@ -33,96 +44,147 @@ class HouseDataRequest(BaseModel):
     data: Union[Dict[str, Any], str]
 
 
-# --- Auth endpoints ---
+router = APIRouter()
+
+# ============================================================
+# Helper Functions
+# ============================================================
+
+def _get_today_date() -> str:
+    """Get today's date in ISO format for the configured timezone."""
+    return datetime.now(timezone.utc).astimezone(
+        zoneinfo.ZoneInfo(TIMEZONE)
+    ).date().isoformat()
+
+
+def _refresh_user_weather(username: str, address: str) -> None:
+    """Refresh user's weather data if it's outdated."""
+    import requests
+    from api.user_data_collection.weather_api import fetch_and_export_weather
+
+    key = os.environ.get("GEOAPIFY_KEY")
+    if not key or not address:
+        return
+
+    try:
+        # Geocode the address
+        params = {"text": address, "format": "json", "apiKey": key}
+        response = requests.get(GEOAPIFY_URL, params=params, timeout=10)
+        
+        if response.status_code != 200:
+            return
+
+        results = response.json().get("results", [])
+        if not results:
+            return
+
+        first_result = results[0]
+        lat, lon = first_result.get("lat"), first_result.get("lon")
+        
+        if lat is None or lon is None:
+            return
+
+        # Fetch and save weather data
+        weather_data = fetch_and_export_weather(lat, lon, days_ahead=7)
+        db.set_user_weather_with_date(username, weather_data, _get_today_date())
+
+    except Exception as e:
+        print(f"Warning: Failed to refresh weather for {username}: {e}")
+
+
+# ============================================================
+# Auth Endpoints
+# ============================================================
+
 @router.post("/signup")
 def signup(data: SignupModel):
+    """Create a new user account."""
     if not data.username or not data.password:
-        raise HTTPException(status_code=400, detail="username and password required")
+        raise HTTPException(status_code=400, detail="Username and password required")
+    
     if not data.address or not data.address.strip():
-        raise HTTPException(status_code=400, detail="address required for signup")
-    ok = db.create_user(data.username, data.password, data.address.strip())
-    if not ok:
-        raise HTTPException(status_code=400, detail="username already exists")
+        raise HTTPException(status_code=400, detail="Address required for signup")
+    
+    success = db.create_user(data.username, data.password, data.address.strip())
+    if not success:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
     return {"ok": True}
 
 
 @router.post("/login")
 def login(data: LoginModel):
+    """Authenticate a user."""
     if not data.username or not data.password:
-        raise HTTPException(status_code=400, detail="username and password required")
-    ok = db.verify_user(data.username, data.password)
-    if not ok:
-        raise HTTPException(status_code=401, detail="invalid username or password")
+        raise HTTPException(status_code=400, detail="Username and password required")
+    
+    if not db.verify_user(data.username, data.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
     address = db.get_user_address(data.username)
 
-    # Refresh user's weather once per day (UTC -> local conversion)
+    # Refresh weather data once per day
     try:
-        today_str = datetime.now(timezone.utc).astimezone(zoneinfo.ZoneInfo("America/Toronto")).date().isoformat()
+        today = _get_today_date()
         last_weather_date = db.get_user_weather_date(data.username)
-
-        if last_weather_date != today_str and address:
-            key = os.environ.get("GEOAPIFY_KEY")
-            if key:
-                # resolve address -> coords then fetch weather
-                import requests
-                from api.user_data_collection.weather_api import fetch_and_export_weather
-
-                params = {"text": address, "format": "json", "apiKey": key}
-                r = requests.get("https://api.geoapify.com/v1/geocode/search", params=params, timeout=10)
-                if r.status_code == 200:
-                    data_geo = r.json()
-                    first = data_geo.get("results", [])[:1]
-                    if first:
-                        res = first[0]
-                        lat = res.get("lat")
-                        lon = res.get("lon")
-                        if lat is not None and lon is not None:
-                            weather_data = fetch_and_export_weather(lat, lon, days_ahead=7)
-                            db.set_user_weather_with_date(data.username, weather_data, today_str)
+        
+        if last_weather_date != today and address:
+            _refresh_user_weather(data.username, address)
     except Exception as e:
-        # Log but don't fail login
-        print(f"Warning: failed to refresh weather for {data.username}: {e}")
+        print(f"Warning: Weather refresh failed for {data.username}: {e}")
 
     return {"ok": True, "username": data.username, "address": address}
 
 
-# --- User data endpoints (weather & house) ---
+# ============================================================
+# User Data Endpoints
+# ============================================================
+
 @router.post("/user/weather")
 def save_user_weather(req: WeatherDataRequest):
+    """Save weather data for a user."""
     if not req.username:
-        raise HTTPException(status_code=400, detail="username required")
-    ok = db.set_user_weather(req.username, req.data)
-    if not ok:
-        raise HTTPException(status_code=404, detail="user not found")
+        raise HTTPException(status_code=400, detail="Username required")
+    
+    if not db.set_user_weather(req.username, req.data):
+        raise HTTPException(status_code=404, detail="User not found")
+    
     return {"ok": True}
 
 
 @router.get("/user/weather")
 def get_user_weather(username: str):
+    """Get stored weather data for a user."""
     if not username:
-        raise HTTPException(status_code=400, detail="username required")
+        raise HTTPException(status_code=400, detail="Username required")
+    
     data = db.get_user_weather(username)
     if data is None:
-        raise HTTPException(status_code=404, detail="no saved weather for user")
+        raise HTTPException(status_code=404, detail="No saved weather for user")
+    
     return {"data": data}
 
 
 @router.post("/user/house")
 def save_user_house(req: HouseDataRequest):
+    """Save house variables for a user."""
     if not req.username:
-        raise HTTPException(status_code=400, detail="username required")
-    ok = db.set_user_house(req.username, req.data)
-    if not ok:
-        raise HTTPException(status_code=404, detail="user not found")
+        raise HTTPException(status_code=400, detail="Username required")
+    
+    if not db.set_user_house(req.username, req.data):
+        raise HTTPException(status_code=404, detail="User not found")
+    
     return {"ok": True}
 
 
 @router.get("/user/house")
 def get_user_house(username: str):
+    """Get stored house variables for a user."""
     if not username:
-        raise HTTPException(status_code=400, detail="username required")
+        raise HTTPException(status_code=400, detail="Username required")
+    
     data = db.get_user_house(username)
     if data is None:
-        raise HTTPException(status_code=404, detail="no saved house variables for user")
+        raise HTTPException(status_code=404, detail="No saved house variables for user")
+    
     return {"data": data}

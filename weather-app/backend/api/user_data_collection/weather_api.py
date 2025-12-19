@@ -1,67 +1,91 @@
+"""
+Weather API Module
+Fetches weather data from Open-Meteo API and provides endpoints for weather data.
+"""
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
+import zoneinfo
 
 import pandas as pd
-from datetime import datetime, timedelta, timezone
-import zoneinfo
 import openmeteo_requests
 import requests_cache
 from retry_requests import retry
-from pathlib import Path
 
-API_DIR = Path(__file__).resolve().parent
+# ============================================================
+# Constants
+# ============================================================
 
+DEFAULT_TIMEZONE = "America/Toronto"
+CACHE_EXPIRY_SECONDS = 3600
+OPENMETEO_URL = "https://api.open-meteo.com/v1/forecast"
+
+HOURLY_VARIABLES = [
+    "temperature_2m",
+    "apparent_temperature",
+    "dew_point_2m",
+    "relativehumidity_2m",
+    "shortwave_radiation",
+    "precipitation",
+    "rain",
+    "snowfall",
+    "windspeed_10m",
+]
+
+# ============================================================
+# Weather Fetching
+# ============================================================
 
 def fetch_and_export_weather(
-    lat,
-    lon,
-    tz_name="America/Toronto",
+    lat: float,
+    lon: float,
+    tz_name: str = DEFAULT_TIMEZONE,
     days_ahead: int = 7,
-):
+) -> dict:
     """
     Fetch hourly weather for the next `days_ahead` days (including today).
-    Returns a dict with:
-      - rows: list of row dicts (date in '%Y-%m-%d %H:%M:%S %Z' and numeric values or None)
-      - start_date, end_date: ISO date strings for the requested range (end_date exclusive)
+    
+    Returns:
+        Dict containing:
+        - rows: list of hourly weather data
+        - text: formatted text representation
+        - lat, lon: coordinates
+        - start_date, end_date_exclusive: date range
     """
-
-    cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
+    # Setup cached session with retry
+    cache_session = requests_cache.CachedSession(".cache", expire_after=CACHE_EXPIRY_SECONDS)
     retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
     client = openmeteo_requests.Client(session=retry_session)
 
-    url = "https://api.open-meteo.com/v1/forecast"
+    # Fetch weather data
     params = {
         "latitude": lat,
         "longitude": lon,
-        "hourly": ",".join([
-            "temperature_2m",
-            "apparent_temperature",
-            "dew_point_2m",
-            "relativehumidity_2m",
-            "shortwave_radiation",
-            "precipitation",
-            "rain",
-            "snowfall",
-            "windspeed_10m",
-        ]),
+        "hourly": ",".join(HOURLY_VARIABLES),
         "timezone": tz_name,
     }
 
-    responses = client.weather_api(url, params=params)
+    responses = client.weather_api(OPENMETEO_URL, params=params)
     response = responses[0]
     hourly = response.Hourly()
-    vars = hourly.Variables
+    variables = hourly.Variables
 
-    temperature = vars(0).ValuesAsNumpy()
-    apparent_temp = vars(1).ValuesAsNumpy()
-    dew_point = vars(2).ValuesAsNumpy()
-    humidity = vars(3).ValuesAsNumpy()
-    solar_rad = vars(4).ValuesAsNumpy()
-    precipitation = vars(5).ValuesAsNumpy()
-    rain = vars(6).ValuesAsNumpy()
-    snowfall = vars(7).ValuesAsNumpy()
-    windspeed = vars(8).ValuesAsNumpy()
+    # Extract variable arrays
+    weather_vars = {
+        "temperature_2m": variables(0).ValuesAsNumpy(),
+        "apparent_temperature": variables(1).ValuesAsNumpy(),
+        "dew_point_2m": variables(2).ValuesAsNumpy(),
+        "humidity_2m": variables(3).ValuesAsNumpy(),
+        "solar_radiation": variables(4).ValuesAsNumpy(),
+        "precipitation": variables(5).ValuesAsNumpy(),
+        "rain": variables(6).ValuesAsNumpy(),
+        "snowfall": variables(7).ValuesAsNumpy(),
+        "windspeed_10m": variables(8).ValuesAsNumpy(),
+    }
 
+    # Build time range
     times_utc = pd.date_range(
         start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
         end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
@@ -70,59 +94,27 @@ def fetch_and_export_weather(
     )
     times_local = times_utc.tz_convert(tz_name)
 
-    df = pd.DataFrame(
-        {
-            "date": times_local,
-            "temperature_2m": temperature,
-            "apparent_temperature": apparent_temp,
-            "dew_point_2m": dew_point,
-            "humidity_2m": humidity,
-            "solar_radiation": solar_rad,
-            "precipitation": precipitation,
-            "rain": rain,
-            "snowfall": snowfall,
-            "windspeed_10m": windspeed,
-        }
-    )
+    # Create DataFrame
+    df = pd.DataFrame({"date": times_local, **weather_vars})
 
-    now_local = datetime.now(timezone.utc).astimezone(zoneinfo.ZoneInfo(tz_name))
-    today = now_local.date()
+    # Filter to requested date range
     tz = zoneinfo.ZoneInfo(tz_name)
+    now_local = datetime.now(timezone.utc).astimezone(tz)
+    today = now_local.date()
     today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=tz)
     range_end = today_start + timedelta(days=days_ahead)
 
     range_df = df[(df["date"] >= today_start) & (df["date"] < range_end)].copy()
 
+    # Build text representation
     header = (
         f"Hourly weather from {today_start.date()} through {(range_end - timedelta(days=1)).date()} "
         f"(inclusive)  -- lat={lat}, lon={lon}, tz={tz_name}\n"
     )
     text_content = header + range_df.to_string(index=False)
 
-    def as_json_val(v):
-        if pd.isna(v):
-            return None
-        try:
-            return float(v)
-        except Exception:
-            return v
-
-    rows = []
-    for _, r in range_df.iterrows():
-        rows.append(
-            {
-                "date": r["date"].strftime("%Y-%m-%d %H:%M:%S %Z"),
-                "temperature_2m": as_json_val(r["temperature_2m"]),
-                "apparent_temperature": as_json_val(r["apparent_temperature"]),
-                "dew_point_2m": as_json_val(r["dew_point_2m"]),
-                "humidity_2m": as_json_val(r["humidity_2m"]),
-                "solar_radiation": as_json_val(r["solar_radiation"]),
-                "precipitation": as_json_val(r["precipitation"]),
-                "rain": as_json_val(r["rain"]),
-                "snowfall": as_json_val(r["snowfall"]),
-                "windspeed_10m": as_json_val(r["windspeed_10m"]),
-            }
-        )
+    # Convert to JSON-serializable rows
+    rows = [_row_to_dict(row) for _, row in range_df.iterrows()]
 
     return {
         "rows": rows,
@@ -134,6 +126,34 @@ def fetch_and_export_weather(
     }
 
 
+def _row_to_dict(row: pd.Series) -> dict:
+    """Convert a DataFrame row to a JSON-serializable dict."""
+    def safe_float(v: Any) -> Optional[float]:
+        if pd.isna(v):
+            return None
+        try:
+            return float(v)
+        except Exception:
+            return v
+
+    return {
+        "date": row["date"].strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "temperature_2m": safe_float(row["temperature_2m"]),
+        "apparent_temperature": safe_float(row["apparent_temperature"]),
+        "dew_point_2m": safe_float(row["dew_point_2m"]),
+        "humidity_2m": safe_float(row["humidity_2m"]),
+        "solar_radiation": safe_float(row["solar_radiation"]),
+        "precipitation": safe_float(row["precipitation"]),
+        "rain": safe_float(row["rain"]),
+        "snowfall": safe_float(row["snowfall"]),
+        "windspeed_10m": safe_float(row["windspeed_10m"]),
+    }
+
+
+# ============================================================
+# Router & Endpoints
+# ============================================================
+
 router = APIRouter()
 
 
@@ -143,9 +163,9 @@ class Coord(BaseModel):
 
 
 @router.post("/weather")
-def weather(coord: Coord):
+def get_weather(coord: Coord):
+    """Fetch weather data for given coordinates."""
     try:
-        out = fetch_and_export_weather(coord.lat, coord.lon)
-        return out
+        return fetch_and_export_weather(coord.lat, coord.lon)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

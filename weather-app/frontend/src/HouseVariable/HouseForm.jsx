@@ -1,139 +1,151 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { Backend, getStoredUser } from "../App";
+
+// ============================================================
+// Constants
+// ============================================================
+
+const INITIAL_FORM_DATA = {
+  home_size: "",
+  age_of_house: "",
+  insulation_quality: "",
+  hvac_type: "",
+  hvac_age: "",
+  personal_comfort: 25,
+  occupancy: "",
+};
+
+const INSULATION_OPTIONS = [
+  { value: "", label: "Select insulation quality" },
+  { value: "excellent", label: "Excellent" },
+  { value: "average", label: "Average" },
+  { value: "poor", label: "Poor" },
+];
+
+const HVAC_OPTIONS = [
+  { value: "", label: "Select HVAC type" },
+  { value: "central", label: "Central" },
+  { value: "heat_pump", label: "Heat pump" },
+  { value: "mini_split", label: "Mini-split" },
+  { value: "window_ac", label: "Window AC" },
+  { value: "none", label: "None" },
+];
+
+const OCCUPANCY_OPTIONS = [
+  { value: "", label: "Select occupancy" },
+  { value: "home_daytime", label: "Home daytime" },
+  { value: "away_daytime", label: "Away daytime" },
+  { value: "hybrid", label: "Hybrid" },
+];
+
+const APPLIANCE_OPTIONS = [
+  "Electric Space Heater",
+  "Portable Air Conditioner",
+  "Electric Water Heater",
+  "Gas Water Heater",
+  "Oven (Electric or Gas)",
+  "Stove / Cooktop (Electric, Gas, or Induction)",
+  "Clothes Dryer (Electric or Gas)",
+  "Washing Machine (hot water cycles)",
+  "Dishwasher (especially drying cycles)",
+  "Electric Vehicle Charger (Level 1 or Level 2)",
+];
+
+const TOTAL_PAGES = 4;
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+const normalizeIncomingHouse = (raw) => {
+  if (!raw || typeof raw !== "object") return null;
+
+  // Support both current and legacy data shapes
+  const merged =
+    raw.data && typeof raw.data === "object"
+      ? { ...raw.data, appliances: raw.appliances }
+      : raw;
+
+  const {
+    home_size,
+    age_of_house,
+    insulation_quality,
+    hvac_type,
+    hvac_age,
+    personal_comfort,
+    occupancy,
+    appliances,
+  } = merged;
+
+  return {
+    data: {
+      home_size: home_size ?? "",
+      age_of_house: age_of_house ?? "",
+      insulation_quality: insulation_quality ?? "",
+      hvac_type: hvac_type ?? "",
+      hvac_age: hvac_age ?? "",
+      personal_comfort: personal_comfort ?? 25,
+      occupancy: occupancy ?? "",
+    },
+    appliances: Array.isArray(appliances) ? appliances : [],
+  };
+};
+
+// ============================================================
+// HouseForm Component
+// ============================================================
 
 export default function HouseForm({ onClose }) {
-  // Page 1 fields
-  const [data, setData] = useState({
-    home_size: "",
-    age_of_house: "",
-    insulation_quality: "",
-    // page 2
-    hvac_type: "",
-    hvac_age: "",
-    // page 4
-    personal_comfort: 25,
-    occupancy: "",
-  });
+  const [data, setData] = useState(INITIAL_FORM_DATA);
   const [appliances, setAppliances] = useState([]);
-
-  const [page, setPage] = useState(1); // 1=page1, 2=page2, 3=appliances, 4=comfort, 5=done
+  const [page, setPage] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  function normalizeIncomingHouse(raw) {
-    if (!raw || typeof raw !== "object") return null;
+  // Load existing house data
+  const loadHouseData = useCallback(async () => {
+    const user = getStoredUser();
+    if (!user?.username) return;
 
-    // Support two shapes:
-    // 1) Current: { home_size, ..., appliances }
-    // 2) Legacy:  { data: { home_size, ... }, appliances }
-    const merged =
-      raw.data && typeof raw.data === "object"
-        ? { ...raw.data, appliances: raw.appliances }
-        : raw;
+    try {
+      const body = await Backend.getHouse(user.username);
+      if (!body?.data) return;
 
-    const {
-      home_size,
-      age_of_house,
-      insulation_quality,
-      hvac_type,
-      hvac_age,
-      personal_comfort,
-      occupancy,
-      appliances,
-    } = merged;
-
-    const normalized = {
-      home_size:
-        home_size === undefined || home_size === null ? "" : String(home_size),
-      age_of_house:
-        age_of_house === undefined || age_of_house === null
-          ? ""
-          : String(age_of_house),
-      insulation_quality: insulation_quality ?? "",
-      hvac_type: hvac_type ?? "",
-      hvac_age:
-        hvac_age === undefined || hvac_age === null ? "" : String(hvac_age),
-      personal_comfort:
-        personal_comfort === undefined || personal_comfort === null
-          ? 25
-          : Number(personal_comfort),
-      occupancy: occupancy ?? "",
-    };
-
-    return {
-      data: normalized,
-      appliances: Array.isArray(appliances) ? appliances : [],
-    };
-  }
-
-  const repopulate = useCallback(() => {
-    const savedUser = (() => {
-      try {
-        const s = localStorage.getItem("weather_user");
-        return s ? JSON.parse(s) : null;
-      } catch {
-        return null;
+      const normalized = normalizeIncomingHouse(body.data);
+      if (normalized) {
+        setData((prev) => ({ ...prev, ...normalized.data }));
+        setAppliances(normalized.appliances);
       }
-    })();
-
-    if (savedUser && savedUser.username) {
-      import("../App").then(({ Backend }) => {
-        Backend.getHouse(savedUser.username)
-          .then((body) => {
-            if (!body || !body.data) return;
-            const normalized = normalizeIncomingHouse(body.data);
-            if (!normalized) return;
-            setData((current) => ({
-              ...current,
-              ...normalized.data,
-            }));
-            setAppliances(normalized.appliances);
-          })
-          .catch(() => {});
-      });
+    } catch {
+      // Silent fail - user may not have house data yet
     }
   }, []);
 
   useEffect(() => {
-    repopulate();
-  }, [repopulate]);
+    loadHouseData();
+  }, [loadHouseData]);
 
-  function update(key, val) {
-    setData((d) => ({ ...d, [key]: val }));
-  }
+  // Form handlers
+  const updateField = useCallback((key, value) => {
+    setData((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
-  function handleApplianceChange(e) {
-    const { value, checked } = e.target;
-    if (checked) {
-      setAppliances((prev) => [...prev, value]);
-    } else {
-      setAppliances((prev) => prev.filter((item) => item !== value));
-    }
-  }
+  const toggleAppliance = useCallback((appliance, checked) => {
+    setAppliances((prev) =>
+      checked ? [...prev, appliance] : prev.filter((a) => a !== appliance)
+    );
+  }, []);
 
-  function validatePage1() {
-    if (!data.home_size || Number(data.home_size) <= 0) return false;
-    if (!data.age_of_house || Number(data.age_of_house) < 0) return false;
-    if (!data.insulation_quality) return false;
-    return true;
-  }
-
-  function validatePage2() {
-    if (!data.hvac_type) return false;
-    return true;
-  }
-
-  function validatePage4() {
-    // personal_comfort has a default; occupancy must be selected on page 4
-    if (!data.occupancy) return false;
-    return true;
-  }
-
-  async function handleSubmit() {
+  // Form submission
+  const handleSubmit = useCallback(async () => {
     setSubmitting(true);
     setError(null);
+
     try {
-      // normalize numeric fields
+      const user = getStoredUser();
+      if (!user?.username) throw new Error("Not logged in");
+
       const payload = {
         home_size: Number(data.home_size),
         age_of_house: Number(data.age_of_house),
@@ -142,308 +154,310 @@ export default function HouseForm({ onClose }) {
         hvac_age: data.hvac_age ? Number(data.hvac_age) : null,
         personal_comfort: Number(data.personal_comfort),
         occupancy: data.occupancy,
-        appliances: appliances,
+        appliances,
       };
 
-      // Because `None` is not valid in JS, handle hvac_age removal
+      // Remove null hvac_age
       if (!payload.hvac_age) delete payload.hvac_age;
 
-      const savedUser = (() => {
-        try {
-          const s = localStorage.getItem("weather_user");
-          return s ? JSON.parse(s) : null;
-        } catch {
-          return null;
-        }
-      })();
-
-      const username = savedUser?.username;
-      if (!username) throw new Error("Not logged in");
-
-      // Use dynamic import of the connector to avoid circular static imports
-      const { Backend } = await import("../App");
-      const json = await Backend.saveHouse(username, payload);
-      setSuccess(json.file || "saved");
+      const result = await Backend.saveHouse(user.username, payload);
+      setSuccess(result.file || "saved");
       setPage(5);
-    } catch (e) {
-      setError(e.message || String(e));
+    } catch (err) {
+      setError(err.message || String(err));
     } finally {
       setSubmitting(false);
     }
-  }
+  }, [data, appliances]);
 
-  const applianceOptions = [
-    "Electric Space Heater",
-    "Portable Air Conditioner",
-    "Electric Water Heater",
-    "Gas Water Heater",
-    "Oven (Electric or Gas)",
-    "Stove / Cooktop (Electric, Gas, or Induction)",
-    "Clothes Dryer (Electric or Gas)",
-    "Washing Machine (hot water cycles)",
-    "Dishwasher (especially drying cycles)",
-    "Electric Vehicle Charger (Level 1 or Level 2)",
-  ];
+  // Navigation handlers
+  const goToPage = useCallback((pageNum) => setPage(pageNum), []);
+
+  // Render page content based on current page
+  const renderPageContent = () => {
+    switch (page) {
+      case 1:
+        return (
+          <Page1
+            data={data}
+            updateField={updateField}
+            onNext={() => goToPage(2)}
+          />
+        );
+      case 2:
+        return (
+          <Page2
+            data={data}
+            updateField={updateField}
+            onBack={() => goToPage(1)}
+            onNext={() => goToPage(3)}
+            error={error}
+          />
+        );
+      case 3:
+        return (
+          <Page3
+            appliances={appliances}
+            options={APPLIANCE_OPTIONS}
+            onToggle={toggleAppliance}
+            onBack={() => goToPage(2)}
+            onNext={() => goToPage(4)}
+          />
+        );
+      case 4:
+        return (
+          <Page4
+            data={data}
+            updateField={updateField}
+            onBack={() => goToPage(3)}
+            onSubmit={handleSubmit}
+            submitting={submitting}
+            error={error}
+          />
+        );
+      case 5:
+        return <SuccessPage success={success} onClose={onClose} />;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="hf-backdrop" onClick={onClose}>
       <div className="hf-card" onClick={(e) => e.stopPropagation()}>
         <div className="hf-header">
-          <h3>House variables</h3>
-          <button className="hf-close" onClick={onClose}>
+          <h3>House Variables</h3>
+          <button className="hf-close" onClick={onClose} aria-label="Close">
             &times;
           </button>
         </div>
 
         <div className="hf-body">
-          <div className="hf-step-indicator">
-            <button
-              className={`hf-step ${page === 1 ? "hf-step-active" : ""}`}
-              onClick={() => setPage(1)}
-            >
-              1
-            </button>
-            <button
-              className={`hf-step ${page === 2 ? "hf-step-active" : ""}`}
-              onClick={() => setPage(2)}
-            >
-              2
-            </button>
-            <button
-              className={`hf-step ${page === 3 ? "hf-step-active" : ""}`}
-              onClick={() => setPage(3)}
-            >
-              3
-            </button>
-            <button
-              className={`hf-step ${page === 4 ? "hf-step-active" : ""}`}
-              onClick={() => setPage(4)}
-            >
-              4
-            </button>
-          </div>
-
-          {page === 1 && (
-            <>
-              <div className="hf-field">
-                <label className="hf-label">Home — Square Feet</label>
-                <input
-                  className="hf-input"
-                  type="number"
-                  min="0"
-                  value={data.home_size}
-                  onChange={(e) => update("home_size", e.target.value)}
-                  placeholder="Enter square feet"
-                />
-              </div>
-
-              <div className="hf-field">
-                <label className="hf-label">Age of House (years)</label>
-                <input
-                  className="hf-input"
-                  type="number"
-                  min="0"
-                  value={data.age_of_house}
-                  onChange={(e) => update("age_of_house", e.target.value)}
-                  placeholder="Enter age of house"
-                />
-              </div>
-
-              <div className="hf-field">
-                <label className="hf-label">Insulation Quality</label>
-                <select
-                  className="hf-input"
-                  value={data.insulation_quality}
-                  onChange={(e) => update("insulation_quality", e.target.value)}
-                >
-                  <option value="">Select insulation quality</option>
-                  <option value="excellent">Excellent</option>
-                  <option value="average">Average</option>
-                  <option value="poor">Poor</option>
-                </select>
-              </div>
-
-              <div className="hf-controls">
-                <button
-                  className="hf-btn hf-btn-primary"
-                  onClick={() => setPage(2)}
-                >
-                  Next
-                </button>
-              </div>
-            </>
+          {page < 5 && (
+            <StepIndicator
+              currentPage={page}
+              totalPages={TOTAL_PAGES}
+              onPageClick={goToPage}
+            />
           )}
-
-          {page === 2 && (
-            <>
-              <div className="hf-field">
-                <label className="hf-label">HVAC Type</label>
-                <select
-                  className="hf-input"
-                  value={data.hvac_type}
-                  onChange={(e) => update("hvac_type", e.target.value)}
-                >
-                  <option value="">Select HVAC type</option>
-                  <option value="central">Central</option>
-                  <option value="heat_pump">Heat pump</option>
-                  <option value="mini_split">Mini-split</option>
-                  <option value="window_ac">Window AC</option>
-                  <option value="none">None</option>
-                </select>
-              </div>
-
-              <div className="hf-field">
-                <label className="hf-label">HVAC Age (years)</label>
-                <input
-                  className="hf-input"
-                  type="number"
-                  min="0"
-                  value={data.hvac_age}
-                  onChange={(e) => update("hvac_age", e.target.value)}
-                />
-              </div>
-
-              <div className="hf-controls">
-                <button
-                  className="hf-btn hf-btn-ghost"
-                  onClick={() => setPage(1)}
-                >
-                  Back
-                </button>
-                <button
-                  className="hf-btn hf-btn-primary"
-                  onClick={() => setPage(3)}
-                >
-                  Next
-                </button>
-              </div>
-              {error && <div className="hf-error">Error: {error}</div>}
-            </>
-          )}
-
-          {page === 3 && (
-            <>
-              <div className="hf-field">
-                <label className="hf-label">Appliances at home</label>
-                <div className="hf-checkbox-group">
-                  {applianceOptions.map((appliance) => (
-                    <label key={appliance} className="hf-checkbox-label">
-                      <input
-                        type="checkbox"
-                        value={appliance}
-                        checked={appliances.includes(appliance)}
-                        onChange={handleApplianceChange}
-                      />
-                      {appliance}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="hf-controls">
-                <button
-                  className="hf-btn hf-btn-ghost"
-                  onClick={() => setPage(2)}
-                >
-                  Back
-                </button>
-                <button
-                  className="hf-btn hf-btn-primary"
-                  onClick={() => setPage(4)}
-                >
-                  Next
-                </button>
-              </div>
-            </>
-          )}
-
-          {page === 4 && (
-            <>
-              <div className="hf-field">
-                <label className="hf-label">Personal Comfort (°C)</label>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={data.personal_comfort}
-                    onChange={(e) => update("personal_comfort", e.target.value)}
-                  />
-                  <div style={{ minWidth: 36 }}>{data.personal_comfort}°C</div>
-                </div>
-              </div>
-
-              <div className="hf-field">
-                <label className="hf-label">Occupancy</label>
-                <select
-                  className="hf-input"
-                  value={data.occupancy}
-                  onChange={(e) => update("occupancy", e.target.value)}
-                >
-                  <option value="">Select occupancy</option>
-                  <option value="home_daytime">Home daytime</option>
-                  <option value="away_daytime">Away daytime</option>
-                  <option value="hybrid">Hybrid</option>
-                </select>
-              </div>
-
-              <div className="hf-controls">
-                <button
-                  className="hf-btn hf-btn-ghost"
-                  onClick={() => setPage(3)}
-                >
-                  Back
-                </button>
-                <button
-                  className="hf-btn hf-btn-primary"
-                  onClick={handleSubmit}
-                  disabled={submitting}
-                >
-                  {submitting ? "Submitting..." : "Save"}
-                </button>
-              </div>
-              {error && <div className="hf-error">Error: {error}</div>}
-            </>
-          )}
-
-          {page === 5 && (
-            <div className="hf-success">
-              <h4>Saved!</h4>
-              <div>
-                Database: <code>{success}</code>
-              </div>
-              <button
-                className="hf-btn hf-btn-primary"
-                style={{ marginTop: 12 }}
-                onClick={onClose}
-              >
-                Close
-              </button>
-            </div>
-          )}
+          {renderPageContent()}
         </div>
       </div>
     </div>
   );
 }
 
-// A small trigger component that shows the `HouseForm` modal when clicked.
+// ============================================================
+// Sub-components
+// ============================================================
+
+const StepIndicator = ({ currentPage, totalPages, onPageClick }) => (
+  <div className="hf-step-indicator">
+    {Array.from({ length: totalPages }, (_, i) => (
+      <button
+        key={i + 1}
+        className={`hf-step ${currentPage === i + 1 ? "hf-step-active" : ""}`}
+        onClick={() => onPageClick(i + 1)}
+      >
+        {i + 1}
+      </button>
+    ))}
+  </div>
+);
+
+const FormField = ({ label, children }) => (
+  <div className="hf-field">
+    <label className="hf-label">{label}</label>
+    {children}
+  </div>
+);
+
+const SelectField = ({ label, value, options, onChange }) => (
+  <FormField label={label}>
+    <select
+      className="hf-input"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {options.map((opt) => (
+        <option key={opt.value} value={opt.value}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
+  </FormField>
+);
+
+const NumberField = ({ label, value, onChange, placeholder, min = 0 }) => (
+  <FormField label={label}>
+    <input
+      className="hf-input"
+      type="number"
+      min={min}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+    />
+  </FormField>
+);
+
+const FormControls = ({
+  onBack,
+  onNext,
+  onSubmit,
+  submitting,
+  nextLabel = "Next",
+}) => (
+  <div className="hf-controls">
+    {onBack && (
+      <button className="hf-btn hf-btn-ghost" onClick={onBack}>
+        Back
+      </button>
+    )}
+    {onNext && (
+      <button className="hf-btn hf-btn-primary" onClick={onNext}>
+        {nextLabel}
+      </button>
+    )}
+    {onSubmit && (
+      <button
+        className="hf-btn hf-btn-primary"
+        onClick={onSubmit}
+        disabled={submitting}
+      >
+        {submitting ? "Submitting..." : "Save"}
+      </button>
+    )}
+  </div>
+);
+
+const ErrorMessage = ({ error }) =>
+  error && <div className="hf-error">Error: {error}</div>;
+
+// Page Components
+const Page1 = ({ data, updateField, onNext }) => (
+  <>
+    <NumberField
+      label="Home — Square Feet"
+      value={data.home_size}
+      onChange={(v) => updateField("home_size", v)}
+      placeholder="Enter square feet"
+    />
+    <NumberField
+      label="Age of House (years)"
+      value={data.age_of_house}
+      onChange={(v) => updateField("age_of_house", v)}
+      placeholder="Enter age of house"
+    />
+    <SelectField
+      label="Insulation Quality"
+      value={data.insulation_quality}
+      options={INSULATION_OPTIONS}
+      onChange={(v) => updateField("insulation_quality", v)}
+    />
+    <FormControls onNext={onNext} />
+  </>
+);
+
+const Page2 = ({ data, updateField, onBack, onNext, error }) => (
+  <>
+    <SelectField
+      label="HVAC Type"
+      value={data.hvac_type}
+      options={HVAC_OPTIONS}
+      onChange={(v) => updateField("hvac_type", v)}
+    />
+    <NumberField
+      label="HVAC Age (years)"
+      value={data.hvac_age}
+      onChange={(v) => updateField("hvac_age", v)}
+    />
+    <FormControls onBack={onBack} onNext={onNext} />
+    <ErrorMessage error={error} />
+  </>
+);
+
+const Page3 = ({ appliances, options, onToggle, onBack, onNext }) => (
+  <>
+    <FormField label="Appliances at home">
+      <div className="hf-checkbox-group">
+        {options.map((appliance) => (
+          <label key={appliance} className="hf-checkbox-label">
+            <input
+              type="checkbox"
+              checked={appliances.includes(appliance)}
+              onChange={(e) => onToggle(appliance, e.target.checked)}
+            />
+            {appliance}
+          </label>
+        ))}
+      </div>
+    </FormField>
+    <FormControls onBack={onBack} onNext={onNext} />
+  </>
+);
+
+const Page4 = ({ data, updateField, onBack, onSubmit, submitting, error }) => (
+  <>
+    <FormField label="Personal Comfort (°C)">
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          value={data.personal_comfort}
+          onChange={(e) => updateField("personal_comfort", e.target.value)}
+        />
+        <span style={{ minWidth: 36 }}>{data.personal_comfort}°C</span>
+      </div>
+    </FormField>
+    <SelectField
+      label="Occupancy"
+      value={data.occupancy}
+      options={OCCUPANCY_OPTIONS}
+      onChange={(v) => updateField("occupancy", v)}
+    />
+    <FormControls onBack={onBack} onSubmit={onSubmit} submitting={submitting} />
+    <ErrorMessage error={error} />
+  </>
+);
+
+const SuccessPage = ({ success, onClose }) => (
+  <div className="hf-success">
+    <h4>Saved!</h4>
+    <div>
+      Database: <code>{success}</code>
+    </div>
+    <button
+      className="hf-btn hf-btn-primary"
+      style={{ marginTop: 12 }}
+      onClick={onClose}
+    >
+      Close
+    </button>
+  </div>
+);
+
+// ============================================================
+// HouseFormTrigger Component
+// ============================================================
+
 export function HouseFormTrigger() {
   const [show, setShow] = useState(false);
+
+  const buttonStyle = {
+    background: "linear-gradient(90deg, #ff7a18, #ffb347)",
+    color: "white",
+    border: "none",
+    padding: "10px 16px",
+    borderRadius: 10,
+    cursor: "pointer",
+    boxShadow: "0 6px 18px rgba(0, 0, 0, 0.12)",
+  };
+
   return (
     <>
-      <button
-        onClick={() => setShow(true)}
-        style={{
-          background: "linear-gradient(90deg,#ff7a18,#ffb347)",
-          color: "white",
-          border: "none",
-          padding: "10px 16px",
-          borderRadius: 10,
-          cursor: "pointer",
-          boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
-        }}
-      >
+      <button onClick={() => setShow(true)} style={buttonStyle}>
         Enter house variables
       </button>
       {show && <HouseForm onClose={() => setShow(false)} />}

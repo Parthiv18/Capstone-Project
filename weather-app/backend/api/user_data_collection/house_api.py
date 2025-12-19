@@ -1,11 +1,16 @@
+"""
+House Variables API Module
+Handles storage and retrieval of house configuration data.
+"""
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from pathlib import Path
 from typing import Optional, List
 from database import db
 
-router = APIRouter()
-
+# ============================================================
+# Models
+# ============================================================
 
 class HouseVariables(BaseModel):
     home_size: int
@@ -19,52 +24,74 @@ class HouseVariables(BaseModel):
     username: Optional[str] = None
 
 
+router = APIRouter()
+
+# ============================================================
+# Endpoints
+# ============================================================
+
 @router.post("/house_variables")
 def save_house_variables(vars: HouseVariables):
-    """Save submitted house variables into the user's DB record.
-
-    This endpoint now requires a `username` to be present in the request body. The
-    house variables are serialized to a small key: value text block and stored in
-    the `user_house` column of the user's row. Writing to disk is no longer performed.
     """
-    try:
-        # Store house variables as a structured JSON object in the DB
-        if not vars.username:
-            raise HTTPException(status_code=400, detail="username required to save house variables")
+    Save house variables to the user's DB record.
+    
+    Requires `username` in the request body. House variables are stored
+    as JSON in the `user_house` column of the user's row.
+    """
+    if not vars.username:
+        raise HTTPException(status_code=400, detail="Username required to save house variables")
 
+    try:
+        # Build house object
         house_obj = {
-            "data": vars.dict(exclude={"appliances", "username"}),
-            "appliances": vars.appliances,
+            "data": vars.model_dump(exclude={"appliances", "username"}),
+            "appliances": vars.appliances or [],
         }
 
-        ok = db.set_user_house(vars.username, house_obj)
-        if not ok:
-            raise HTTPException(status_code=404, detail="user not found")
+        # Save to database
+        if not db.set_user_house(vars.username, house_obj):
+            raise HTTPException(status_code=404, detail="User not found")
 
-        # Initialize simulated indoor temp on first house submission so
-        # `/api/simulation/{username}` can start immediately.
-        user_id = db.get_user_id(vars.username)
-        if user_id is not None and db.get_simulated_temp(user_id) is None:
-            initial_temp = 70.0
-            raw_weather = db.get_user_weather(vars.username)
+        # Initialize simulated indoor temp if this is first house submission
+        _initialize_simulation_temp(vars.username)
 
-            weather_rows = None
-            if isinstance(raw_weather, dict):
-                weather_rows = raw_weather.get("rows")
-            elif isinstance(raw_weather, list):
-                weather_rows = raw_weather
-
-            if weather_rows and isinstance(weather_rows, list) and len(weather_rows) > 0:
-                first_row = weather_rows[0]
-                if isinstance(first_row, dict) and "temperature_2m" in first_row:
-                    try:
-                        initial_temp = float(first_row["temperature_2m"])
-                    except Exception:
-                        initial_temp = 70.0
-
-            db.update_simulated_temp(user_id, initial_temp)
         return {"status": "ok", "saved": "db"}
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _initialize_simulation_temp(username: str) -> None:
+    """
+    Initialize simulated indoor temperature on first house submission.
+    Uses the first weather row's temperature or a default value.
+    """
+    user_id = db.get_user_id(username)
+    if user_id is None:
+        return
+
+    # Skip if already initialized
+    if db.get_simulated_temp(user_id) is not None:
+        return
+
+    # Try to get initial temp from weather data
+    initial_temp = 70.0  # Default
+    raw_weather = db.get_user_weather(username)
+
+    weather_rows = None
+    if isinstance(raw_weather, dict):
+        weather_rows = raw_weather.get("rows")
+    elif isinstance(raw_weather, list):
+        weather_rows = raw_weather
+
+    if weather_rows and len(weather_rows) > 0:
+        first_row = weather_rows[0]
+        if isinstance(first_row, dict) and "temperature_2m" in first_row:
+            try:
+                initial_temp = float(first_row["temperature_2m"])
+            except (ValueError, TypeError):
+                pass
+
+    db.update_simulated_temp(user_id, initial_temp)

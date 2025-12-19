@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import WeatherData from "./Weather/WeatherData";
-import HouseForm, { HouseFormTrigger } from "./HouseVariable/HouseForm";
+import { HouseFormTrigger } from "./HouseVariable/HouseForm";
 import "./HouseVariable/house_form.css";
 import Login from "./Authentication/Login";
 import Logout from "./Authentication/Logout";
@@ -8,131 +8,166 @@ import Thermostat from "./Thermostat/Thermostat";
 import Alerts from "./Alerts/Alerts";
 import "./app.css";
 
+// Constants
 const API_BASE = "http://localhost:8000";
+const STORAGE_KEY = "weather_user";
 
-// Frontend connector: centralized backend API methods
-export const Backend = {
-  async login(username, password) {
-    const res = await fetch(`${API_BASE}/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
+/**
+ * Helper to make API requests with consistent error handling
+ */
+const apiRequest = async (url, options = {}) => {
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
 
-  async signup(username, password, address) {
-    const res = await fetch(`${API_BASE}/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, address }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || `Request failed with status ${res.status}`);
+  }
 
-  async weatherByAddress(address) {
-    const res = await fetch(
-      `${API_BASE}/weather_address?address=${encodeURIComponent(address)}`
-    );
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
-
-  async getUserWeather(username) {
-    const res = await fetch(
-      `${API_BASE}/user/weather?username=${encodeURIComponent(username)}`
-    );
-    if (!res.ok) return null;
-    return res.json();
-  },
-
-  async saveUserWeather(username, data) {
-    const res = await fetch(`${API_BASE}/user/weather`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, data }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
-
-  async saveHouse(username, data) {
-    const res = await fetch(`${API_BASE}/user/house`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, data }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
-
-  async getHouse(username) {
-    const res = await fetch(
-      `${API_BASE}/user/house?username=${encodeURIComponent(username)}`
-    );
-    if (!res.ok) return null;
-    return res.json();
-  },
-
-  async getSimulation(username) {
-    const res = await fetch(
-      `${API_BASE}/api/simulation/${encodeURIComponent(username)}`
-    );
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
+  return res.json();
 };
+
+/**
+ * Centralized Backend API - all server communication in one place
+ */
+export const Backend = {
+  // Auth
+  login: (username, password) =>
+    apiRequest(`${API_BASE}/login`, {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+
+  signup: (username, password, address) =>
+    apiRequest(`${API_BASE}/signup`, {
+      method: "POST",
+      body: JSON.stringify({ username, password, address }),
+    }),
+
+  // Weather
+  weatherByAddress: (address) =>
+    apiRequest(
+      `${API_BASE}/weather_address?address=${encodeURIComponent(address)}`
+    ),
+
+  getUserWeather: async (username) => {
+    try {
+      return await apiRequest(
+        `${API_BASE}/user/weather?username=${encodeURIComponent(username)}`
+      );
+    } catch {
+      return null;
+    }
+  },
+
+  saveUserWeather: (username, data) =>
+    apiRequest(`${API_BASE}/user/weather`, {
+      method: "POST",
+      body: JSON.stringify({ username, data }),
+    }),
+
+  // House
+  saveHouse: (username, data) =>
+    apiRequest(`${API_BASE}/user/house`, {
+      method: "POST",
+      body: JSON.stringify({ username, data }),
+    }),
+
+  getHouse: async (username) => {
+    try {
+      return await apiRequest(
+        `${API_BASE}/user/house?username=${encodeURIComponent(username)}`
+      );
+    } catch {
+      return null;
+    }
+  },
+
+  // Simulation
+  getSimulation: (username) =>
+    apiRequest(`${API_BASE}/api/simulation/${encodeURIComponent(username)}`),
+};
+
+/**
+ * Helper to safely access localStorage
+ */
+const getStoredUser = () => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+};
+
+const setStoredUser = (user) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+  } catch {
+    // Storage unavailable - silent fail
+  }
+};
+
+const clearStoredUser = () => {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Storage unavailable - silent fail
+  }
+};
+
+export { STORAGE_KEY, getStoredUser, setStoredUser, clearStoredUser };
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState(null);
 
+  // Restore session on mount
   useEffect(() => {
-    try {
-      const s = localStorage.getItem("weather_user");
-      if (s) {
-        const parsed = JSON.parse(s);
-        if (parsed?.username) {
-          setLoggedIn(true);
-          setUsername(parsed.username);
-        }
-      }
-    } catch (_) {}
+    const storedUser = getStoredUser();
+    if (storedUser?.username) {
+      setLoggedIn(true);
+      setUsername(storedUser.username);
+    }
   }, []);
 
-  function handleLogin(info) {
+  const handleLogin = useCallback((info) => {
     setLoggedIn(true);
     setUsername(info.username);
-  }
+  }, []);
 
-  function handleLogout() {
+  const handleLogout = useCallback(() => {
+    clearStoredUser();
     setLoggedIn(false);
     setUsername(null);
-  }
+  }, []);
 
-  if (!loggedIn) return <Login onLogin={handleLogin} />;
+  // Show login if not authenticated
+  if (!loggedIn) {
+    return <Login onLogin={handleLogin} />;
+  }
 
   return (
     <div className="app-container">
-      <div className="app-header">
+      <header className="app-header">
         <div>
-          <div className="welcome">Welcome, {username}</div>
+          <h1 className="welcome">Welcome, {username}</h1>
           <div className="header-actions">
             <HouseFormTrigger />
             <Logout onLogout={handleLogout} />
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="cards-grid">
-        <div className="top-row">
+      <main className="cards-grid">
+        <section className="top-row">
           <WeatherData username={username} loggedIn={loggedIn} />
           <Thermostat username={username} />
-        </div>
+        </section>
         <Alerts />
-      </div>
+      </main>
     </div>
   );
 }

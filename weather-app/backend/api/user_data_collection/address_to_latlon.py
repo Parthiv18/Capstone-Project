@@ -1,86 +1,105 @@
+"""
+Geocoding API Module
+Resolves addresses to coordinates using Geoapify service.
+"""
+
 from fastapi import APIRouter, HTTPException
 import os
 import requests
 
+# ============================================================
+# Constants
+# ============================================================
+
+GEOAPIFY_URL = "https://api.geoapify.com/v1/geocode/search"
+REQUEST_TIMEOUT = 10
+
 router = APIRouter()
 
+# ============================================================
+# Helper Functions
+# ============================================================
 
-@router.get("/geocode")
-def geocode(address: str):
-    """Resolve a free-text address to { lat, lon } using Geoapify. The GEOAPIFY_KEY must be set in env."""
+def _get_api_key() -> str:
+    """Get Geoapify API key from environment."""
     key = os.environ.get("GEOAPIFY_KEY")
     if not key:
         raise HTTPException(status_code=500, detail="Geoapify key not configured on server")
+    return key
 
-    if not address:
-        raise HTTPException(status_code=400, detail="address query param required")
 
+def _geocode_address(address: str) -> dict:
+    """Resolve address to coordinates."""
+    key = _get_api_key()
+    
     params = {"text": address, "format": "json", "apiKey": key}
+    
     try:
-        r = requests.get("https://api.geoapify.com/v1/geocode/search", params=params, timeout=10)
+        response = requests.get(GEOAPIFY_URL, params=params, timeout=REQUEST_TIMEOUT)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-    if r.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"geocoding service returned {r.status_code}")
-
-    data = r.json()
-    first = data.get("results", [])[:1]
-    if not first:
-        raise HTTPException(status_code=404, detail="no results for address")
-
-    res = first[0]
-    lat = res.get("lat")
-    lon = res.get("lon")
+        raise HTTPException(status_code=502, detail=f"Geocoding request failed: {e}")
+    
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Geocoding service returned {response.status_code}")
+    
+    data = response.json()
+    results = data.get("results", [])
+    
+    if not results:
+        raise HTTPException(status_code=404, detail="No results for address")
+    
+    first_result = results[0]
+    lat = first_result.get("lat")
+    lon = first_result.get("lon")
+    
     if lat is None or lon is None:
-        raise HTTPException(status_code=502, detail="geocoding returned no coordinates")
+        raise HTTPException(status_code=502, detail="Geocoding returned no coordinates")
+    
+    return {
+        "lat": lat,
+        "lon": lon,
+        "formatted": first_result.get("formatted"),
+    }
 
-    return {"lat": lat, "lon": lon, "formatted": res.get("formatted")}
+
+# ============================================================
+# Endpoints
+# ============================================================
+
+@router.get("/geocode")
+def geocode(address: str):
+    """Resolve a free-text address to coordinates using Geoapify."""
+    if not address:
+        raise HTTPException(status_code=400, detail="Address query param required")
+    
+    return _geocode_address(address)
 
 
 @router.get("/weather_address")
 def weather_by_address(address: str, days_ahead: int = 7):
-    """Geocode the address (text), then fetch and return weather rows (same shape as /weather).
-    Returns the same dict as fetch_and_export_weather.
+    """
+    Geocode the address, then fetch and return weather data.
+    Returns the same structure as the /weather endpoint.
     """
     if not address:
-        raise HTTPException(status_code=400, detail="address query param required")
-
-    key = os.environ.get("GEOAPIFY_KEY")
-    if not key:
-        raise HTTPException(status_code=500, detail="Geoapify key not configured on server")
-
-    params = {"text": address, "format": "json", "apiKey": key}
-    try:
-        r = requests.get("https://api.geoapify.com/v1/geocode/search", params=params, timeout=10)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-    if r.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"geocoding service returned {r.status_code}")
-
-    data = r.json()
-    first = data.get("results", [])[:1]
-    if not first:
-        raise HTTPException(status_code=404, detail="no results for address")
-
-    res = first[0]
-    lat = res.get("lat")
-    lon = res.get("lon")
-    if lat is None or lon is None:
-        raise HTTPException(status_code=502, detail="geocoding returned no coordinates")
-
-    # Import here to avoid circular imports at module import time
+        raise HTTPException(status_code=400, detail="Address query param required")
+    
+    # Geocode the address
+    geo_result = _geocode_address(address)
+    lat, lon = geo_result["lat"], geo_result["lon"]
+    
+    # Fetch weather data
     from api.user_data_collection.weather_api import fetch_and_export_weather
-
+    
     try:
         weather = fetch_and_export_weather(lat, lon, days_ahead=days_ahead)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"failed to fetch weather: {e}")
-
-    # attach resolved location info
-    weather["address_formatted"] = res.get("formatted")
+        raise HTTPException(status_code=502, detail=f"Failed to fetch weather: {e}")
+    
+    # Attach location info
+    weather["address_formatted"] = geo_result["formatted"]
     weather["address"] = address
     weather["lat"] = lat
     weather["lon"] = lon
+    
     return weather

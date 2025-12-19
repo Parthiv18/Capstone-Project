@@ -1,161 +1,150 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import "./Login.css";
-import { Backend } from "../App";
+import { Backend, setStoredUser } from "../App";
+
+// ============================================================
+// Login Component
+// ============================================================
 
 export default function Login({ onLogin }) {
-  const [loginUser, setLoginUser] = useState("");
-  const [loginPass, setLoginPass] = useState("");
-  const [signupUser, setSignupUser] = useState("");
-  const [signupPass, setSignupPass] = useState("");
-  const [signupAddress, setSignupAddress] = useState("");
+  // Form state
+  const [loginForm, setLoginForm] = useState({ user: "", pass: "" });
+  const [signupForm, setSignupForm] = useState({
+    user: "",
+    pass: "",
+    address: "",
+  });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  async function doLogin(e) {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-    try {
-      const json = await Backend.login(loginUser, loginPass);
-      const info = { username: json.username, address: json.address };
-      try {
-        localStorage.setItem("weather_user", JSON.stringify(info));
-      } catch (e) {}
+  // Handle successful authentication
+  const handleAuthSuccess = useCallback(
+    (userInfo) => {
+      const info = { username: userInfo.username, address: userInfo.address };
+      setStoredUser(info);
       onLogin(info);
-    } catch (e) {
-      setError(e.message || String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [onLogin]
+  );
 
-  async function doSignup(e) {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-    // client-side validation: require username, password, address
-    if (!signupUser || !signupPass || !signupAddress) {
-      setError("username, password and address are required for signup");
-      setLoading(false);
-      return;
-    }
-    try {
-      await Backend.signup(signupUser, signupPass, signupAddress);
-      // auto-login after signup
-      const json = await Backend.login(signupUser, signupPass);
-      const info = { username: json.username, address: json.address };
+  // Login handler
+  const handleLogin = useCallback(
+    async (e) => {
+      e.preventDefault();
+      setError(null);
+      setLoading(true);
+
       try {
-        localStorage.setItem("weather_user", JSON.stringify(info));
-      } catch (e) {}
-      onLogin(info);
-    } catch (e) {
-      setError(e.message || String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
+        const result = await Backend.login(loginForm.user, loginForm.pass);
+        handleAuthSuccess(result);
+      } catch (err) {
+        setError(err.message || String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loginForm, handleAuthSuccess]
+  );
+
+  // Signup handler
+  const handleSignup = useCallback(
+    async (e) => {
+      e.preventDefault();
+      setError(null);
+
+      // Validation
+      if (!signupForm.user || !signupForm.pass || !signupForm.address) {
+        setError("Username, password, and address are required for signup");
+        return;
+      }
+
+      setLoading(true);
+
+      try {
+        await Backend.signup(
+          signupForm.user,
+          signupForm.pass,
+          signupForm.address
+        );
+        // Auto-login after signup
+        const result = await Backend.login(signupForm.user, signupForm.pass);
+        handleAuthSuccess(result);
+      } catch (err) {
+        setError(err.message || String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [signupForm, handleAuthSuccess]
+  );
+
+  // Input change handlers
+  const updateLoginForm = useCallback((field, value) => {
+    setLoginForm((prev) => ({ ...prev, [field]: value }));
+  }, []);
+
+  const updateSignupForm = useCallback((field, value) => {
+    setSignupForm((prev) => ({ ...prev, [field]: value }));
+  }, []);
 
   return (
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-grid">
-          {/* SIGN UP */}
-          <div className="auth-form-container">
-            <h2 className="auth-h2">Sign Up</h2>
-            <form onSubmit={doSignup} className="auth-form">
-              <div className="auth-input-group">
-                <label className="auth-label">Username</label>
-                <div className="auth-input-wrapper">
-                  <input
-                    type="text"
-                    value={signupUser}
-                    onChange={(e) => setSignupUser(e.target.value)}
-                    className="auth-input"
-                    placeholder="Enter username"
-                  />
-                </div>
-              </div>
+          {/* Sign Up Form */}
+          <AuthForm
+            title="Sign Up"
+            onSubmit={handleSignup}
+            loading={loading}
+            buttonText="Sign Up"
+            buttonClass="signup-button"
+          >
+            <InputField
+              label="Username"
+              value={signupForm.user}
+              onChange={(v) => updateSignupForm("user", v)}
+              placeholder="Enter username"
+            />
+            <InputField
+              label="Password"
+              type="password"
+              value={signupForm.pass}
+              onChange={(v) => updateSignupForm("pass", v)}
+              placeholder="Create password"
+            />
+            <InputField
+              label="Address"
+              value={signupForm.address}
+              onChange={(v) => updateSignupForm("address", v)}
+              placeholder='Format: "Street, City"'
+            />
+          </AuthForm>
 
-              <div className="auth-input-group">
-                <label className="auth-label">Password</label>
-                <div className="auth-input-wrapper">
-                  <input
-                    type="password"
-                    value={signupPass}
-                    onChange={(e) => setSignupPass(e.target.value)}
-                    className="auth-input"
-                    placeholder="Create password"
-                  />
-                </div>
-              </div>
-
-              <div className="auth-input-group">
-                <label className="auth-label">Address</label>
-                <div className="auth-input-wrapper">
-                  <input
-                    type="text"
-                    value={signupAddress}
-                    onChange={(e) => setSignupAddress(e.target.value)}
-                    className="auth-input"
-                    placeholder={`Format: "Street, City"`}
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="auth-button signup-button"
-                disabled={loading}
-              >
-                {loading ? "..." : "Sign Up"}
-              </button>
-            </form>
-          </div>
-
-          {/* LOGIN */}
-          <div className="auth-form-container">
-            <h2 className="auth-h2">Login</h2>
-            <form onSubmit={doLogin} className="auth-form">
-              <div className="auth-input-group">
-                <label className="auth-label">Username</label>
-                <div className="auth-input-wrapper">
-                  <input
-                    type="text"
-                    value={loginUser}
-                    onChange={(e) => setLoginUser(e.target.value)}
-                    className="auth-input"
-                    placeholder="Enter username"
-                  />
-                </div>
-              </div>
-
-              <div className="auth-input-group">
-                <label className="auth-label">Password</label>
-                <div className="auth-input-wrapper">
-                  <input
-                    type="password"
-                    value={loginPass}
-                    onChange={(e) => setLoginPass(e.target.value)}
-                    className="auth-input"
-                    placeholder="Enter password"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="auth-button login-button"
-                disabled={loading}
-              >
-                <span className="login-button-text">
-                  {loading ? "..." : "Login"}
-                </span>
-              </button>
-            </form>
-          </div>
+          {/* Login Form */}
+          <AuthForm
+            title="Login"
+            onSubmit={handleLogin}
+            loading={loading}
+            buttonText="Login"
+            buttonClass="login-button"
+          >
+            <InputField
+              label="Username"
+              value={loginForm.user}
+              onChange={(v) => updateLoginForm("user", v)}
+              placeholder="Enter username"
+            />
+            <InputField
+              label="Password"
+              type="password"
+              value={loginForm.pass}
+              onChange={(v) => updateLoginForm("pass", v)}
+              placeholder="Enter password"
+            />
+          </AuthForm>
         </div>
 
-        {/* FOOTER */}
+        {/* Footer */}
         <div className="auth-footer">
           {error ? (
             <p className="auth-error-text">
@@ -172,3 +161,47 @@ export default function Login({ onLogin }) {
     </div>
   );
 }
+
+// ============================================================
+// Sub-components
+// ============================================================
+
+const AuthForm = ({
+  title,
+  onSubmit,
+  loading,
+  buttonText,
+  buttonClass,
+  children,
+}) => (
+  <div className="auth-form-container">
+    <h2 className="auth-h2">{title}</h2>
+    <form onSubmit={onSubmit} className="auth-form">
+      {children}
+      <button
+        type="submit"
+        className={`auth-button ${buttonClass}`}
+        disabled={loading}
+      >
+        <span className="login-button-text">
+          {loading ? "..." : buttonText}
+        </span>
+      </button>
+    </form>
+  </div>
+);
+
+const InputField = ({ label, type = "text", value, onChange, placeholder }) => (
+  <div className="auth-input-group">
+    <label className="auth-label">{label}</label>
+    <div className="auth-input-wrapper">
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="auth-input"
+        placeholder={placeholder}
+      />
+    </div>
+  </div>
+);

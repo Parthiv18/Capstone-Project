@@ -1,243 +1,377 @@
-import React, { useEffect, useState, useMemo, useRef } from "react";
+import React, {
+  useEffect,
+  useState,
+  useMemo,
+  useRef,
+  useCallback,
+} from "react";
 import "./weather.css";
-import { Backend } from "../App";
+import { Backend, getStoredUser } from "../App";
 
-function formatHour(dateStr) {
+// ============================================================
+// Utility Functions
+// ============================================================
+
+const formatHour = (dateStr) => {
   try {
-    const d = new Date(dateStr);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch (_) {
+    return new Date(dateStr).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
     return dateStr;
   }
-}
+};
 
-function yyyyMMdd(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
-    2,
-    "0"
-  )}-${String(date.getDate()).padStart(2, "0")}`;
-}
+const toISODate = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+// Chart constants
+const CHART = {
+  WIDTH: 800,
+  HEIGHT: 240,
+  PADDING: 30,
+  LABELS_COUNT: 8,
+  GRID_STEPS: [0, 0.25, 0.5, 0.75, 1],
+};
+
+const TOOLTIP = {
+  WIDTH: 180,
+  HEIGHT: 170,
+  OFFSET_X: 8,
+  OFFSET_Y: -58,
+};
+
+// ============================================================
+// WeatherData Component
+// ============================================================
 
 export default function WeatherData({ username, loggedIn }) {
-  // const API_BASE = "http://localhost:8000"
-
-  // Weather control state (moved from App)
+  // State
   const [address, setAddress] = useState("");
-  const [activeLat, setActiveLat] = useState(null);
-  const [activeLon, setActiveLon] = useState(null);
+  const [coords, setCoords] = useState({ lat: null, lon: null });
   const [serverData, setServerData] = useState(null);
-  const [fetching, setFetching] = useState(false);
-  const [fetchError, setFetchError] = useState(null);
-
   const [loading, setLoading] = useState(true);
-  const [rows, setRows] = useState([]);
   const [error, setError] = useState(null);
+  const [rows, setRows] = useState([]);
   const [cursorIndex, setCursorIndex] = useState(null);
-  const [selectedDay, setSelectedDay] = useState(null); // yyyy-MM-dd string
+  const [selectedDay, setSelectedDay] = useState(null);
 
   const svgRef = useRef(null);
 
-  // initialize address from localStorage if available
+  // Initialize address from localStorage
   useEffect(() => {
-    try {
-      const s = localStorage.getItem("weather_user");
-      if (s) {
-        const parsed = JSON.parse(s);
-        if (parsed && parsed.address) setAddress(parsed.address);
-      }
-    } catch (_) {}
+    const user = getStoredUser();
+    if (user?.address) {
+      setAddress(user.address);
+    }
   }, []);
 
-  // When logged in and address is set, resolve address -> serverData (lat/lon + rows)
+  // Fetch weather data when logged in with address
   useEffect(() => {
+    if (!loggedIn || !address) return;
+
     let cancelled = false;
-    async function fetchByAddress() {
-      if (!loggedIn) return;
-      if (!address) return;
-      setFetching(true);
-      setFetchError(null);
-      setServerData(null);
+
+    const fetchWeather = async () => {
+      setLoading(true);
+      setError(null);
+
       try {
-        // Try to load stored weather from user's DB first
+        // Try to load stored weather first
         if (username) {
-          try {
-            const userJson = await Backend.getUserWeather(username);
-            if (userJson && userJson.data) {
-              try {
-                const parsed = JSON.parse(userJson.data);
-                if (cancelled) return;
-                if (parsed.lat) setActiveLat(Number(parsed.lat));
-                if (parsed.lon) setActiveLon(Number(parsed.lon));
-                setServerData(parsed);
-                return; // used stored user weather
-              } catch (e) {
-                // fall through to fresh fetch
-              }
+          const userJson = await Backend.getUserWeather(username);
+          if (!cancelled && userJson?.data) {
+            try {
+              const parsed = JSON.parse(userJson.data);
+              if (parsed.lat)
+                setCoords({ lat: Number(parsed.lat), lon: Number(parsed.lon) });
+              setServerData(parsed);
+              return;
+            } catch {
+              // Fall through to fresh fetch
             }
-          } catch (e) {
-            // ignore and fall back
           }
         }
 
+        // Fetch fresh weather data
         const json = await Backend.weatherByAddress(address);
         if (cancelled) return;
-        if (json.lat) setActiveLat(Number(json.lat));
-        if (json.lon) setActiveLon(Number(json.lon));
+
+        if (json.lat) {
+          setCoords({ lat: Number(json.lat), lon: Number(json.lon) });
+        }
         setServerData(json);
 
-        // Persist to user's DB for later use
-        try {
-          if (username) {
-            Backend.saveUserWeather(username, JSON.stringify(json)).catch(
-              () => {}
-            );
-          }
-        } catch (_) {}
-      } catch (e) {
-        if (!cancelled) setFetchError(e.message || String(e));
+        // Persist to user's DB for later use (fire and forget)
+        if (username) {
+          Backend.saveUserWeather(username, JSON.stringify(json)).catch(
+            () => {}
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message || String(err));
+        }
       } finally {
-        if (!cancelled) setFetching(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-    }
-    fetchByAddress();
+    };
+
+    fetchWeather();
     return () => {
       cancelled = true;
     };
   }, [loggedIn, address, username]);
 
-  // load detailed weather when we have coords or serverData
+  // Process weather data when serverData changes
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        let data;
-        if (serverData) {
-          data = serverData;
-        } else {
-          // require valid coords
-          if (activeLat == null || activeLon == null) {
-            throw new Error("No coordinates available to fetch weather");
-          }
-          const res = await fetch(`${API_BASE}/weather`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              lat: Number(activeLat),
-              lon: Number(activeLon),
-            }),
-          });
-          if (!res.ok) throw new Error(await res.text());
-          data = await res.json();
-        }
+    if (!serverData) return;
 
-        if (!cancelled) {
-          const r = data.rows || [];
-          setRows(r);
-          const now = r.length ? new Date(r[0].date) : new Date();
-          const today = new Date(now);
-          today.setHours(0, 0, 0, 0);
-          setSelectedDay(yyyyMMdd(today));
-        }
-      } catch (err) {
-        setError(err.message || String(err));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+    const weatherRows = serverData.rows || [];
+    setRows(weatherRows);
+
+    // Set initial selected day to today
+    if (weatherRows.length > 0) {
+      const now = new Date(weatherRows[0].date);
+      now.setHours(0, 0, 0, 0);
+      setSelectedDay(toISODate(now));
     }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeLat, activeLon, serverData]);
+    setLoading(false);
+  }, [serverData]);
 
-  // Current hour row (closest to now)
+  // Memoized computed values
   const now = Date.now();
+
   const currentHourRow = useMemo(() => {
     if (!rows.length) return null;
     return rows.reduce((closest, r) => {
-      const t = new Date(r.date).getTime();
-      return Math.abs(t - now) <
-        Math.abs(new Date(closest.date).getTime() - now)
+      const rowTime = new Date(r.date).getTime();
+      const closestTime = new Date(closest.date).getTime();
+      return Math.abs(rowTime - now) < Math.abs(closestTime - now)
         ? r
         : closest;
     }, rows[0]);
   }, [rows, now]);
 
-  // Build 7-day selector (today + next 6 days)
   const next7Days = useMemo(() => {
-    const days = [];
-    const nowLocal = rows.length ? new Date(rows[0].date) : new Date();
-    const start = new Date(nowLocal);
-    start.setHours(0, 0, 0, 0); // today at midnight
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
-      days.push({
+    const baseDate = rows.length > 0 ? new Date(rows[0].date) : new Date();
+    baseDate.setHours(0, 0, 0, 0);
+
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(baseDate);
+      d.setDate(baseDate.getDate() + i);
+      return {
         label: d.toLocaleDateString([], { weekday: "short" }),
-        iso: yyyyMMdd(d),
+        iso: toISODate(d),
         dateObj: d,
-      });
-    }
-    return days;
+      };
+    });
   }, [rows]);
 
-  // Filter rows for the selected day and hours 0..23 (inclusive)
   const dayRows = useMemo(() => {
     if (!selectedDay || !rows.length) return [];
+
     return rows
-      .map((r) => ({ ...r, __d: new Date(r.date) }))
-      .filter((r) => {
-        const dstr = yyyyMMdd(r.__d);
-        const h = r.__d.getHours();
-        return dstr === selectedDay && h >= 0 && h <= 23;
-      })
-      .sort((a, b) => a.__d - b.__d);
+      .map((r) => ({ ...r, _date: new Date(r.date) }))
+      .filter(
+        (r) => toISODate(r._date) === selectedDay && r._date.getHours() <= 23
+      )
+      .sort((a, b) => a._date - b._date);
   }, [rows, selectedDay]);
 
-  // temps/min/max for selected day's chart
-  const temps = useMemo(() => dayRows.map((r) => r.temperature_2m), [dayRows]);
-  const minT = useMemo(() => (temps.length ? Math.min(...temps) : 0), [temps]);
-  const maxT = useMemo(() => (temps.length ? Math.max(...temps) : 30), [temps]);
+  const { temps, minT, maxT } = useMemo(() => {
+    const temperatures = dayRows.map((r) => r.temperature_2m);
+    return {
+      temps: temperatures,
+      minT: temperatures.length ? Math.min(...temperatures) : 0,
+      maxT: temperatures.length ? Math.max(...temperatures) : 30,
+    };
+  }, [dayRows]);
 
-  // coords generator uses the day's rows (not the full rows)
-  function coordsForIndex(i, width, height, padding) {
-    const count = Math.max(1, dayRows.length - 1);
-    const xStep = (width - padding * 2) / count;
-    const x = padding + i * xStep;
-    const t = dayRows[i].temperature_2m;
-    const frac =
-      dayRows.length === 0 ? 0 : (t - minT) / Math.max(0.0001, maxT - minT);
-    const y = padding + (1 - frac) * (height - padding * 2);
-    return [x, y];
-  }
+  // Chart coordinate calculation
+  const getChartCoords = useCallback(
+    (index) => {
+      const { WIDTH, HEIGHT, PADDING } = CHART;
+      const count = Math.max(1, dayRows.length - 1);
+      const xStep = (WIDTH - PADDING * 2) / count;
+      const x = PADDING + index * xStep;
 
-  function handlePointerMove(e) {
-    const svg = svgRef.current;
-    if (!svg || dayRows.length === 0) return;
-    const rect = svg.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const width = rect.width;
-    const padding = 30;
-    const xStep = (width - padding * 2) / Math.max(1, dayRows.length - 1);
-    let idx = Math.round((x - padding) / xStep);
-    idx = Math.max(0, Math.min(dayRows.length - 1, idx));
-    setCursorIndex(idx);
-  }
+      const temp = dayRows[index]?.temperature_2m ?? 0;
+      const range = Math.max(0.0001, maxT - minT);
+      const frac = (temp - minT) / range;
+      const y = PADDING + (1 - frac) * (HEIGHT - PADDING * 2);
 
-  function handlePointerLeave() {
+      return [x, y];
+    },
+    [dayRows, minT, maxT]
+  );
+
+  // Event handlers
+  const handlePointerMove = useCallback(
+    (e) => {
+      const svg = svgRef.current;
+      if (!svg || dayRows.length === 0) return;
+
+      const rect = svg.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const { WIDTH, PADDING } = CHART;
+      const xStep = (WIDTH - PADDING * 2) / Math.max(1, dayRows.length - 1);
+
+      const idx = Math.max(
+        0,
+        Math.min(dayRows.length - 1, Math.round((x - PADDING) / xStep))
+      );
+      setCursorIndex(idx);
+    },
+    [dayRows.length]
+  );
+
+  const handlePointerLeave = useCallback(() => {
     setCursorIndex(null);
-  }
-  // If there is no server data and no coords, show a simple loading placeholder.
-  if (!serverData && (activeLat == null || activeLon == null)) {
+  }, []);
+
+  const handleDaySelect = useCallback((iso) => {
+    setSelectedDay(iso);
+    setCursorIndex(null);
+  }, []);
+  // Loading states
+  if (!serverData && coords.lat === null) {
     return <div className="wd-container wd-card">Loading Data...</div>;
   }
 
-  if (loading)
+  if (loading) {
     return <div className="wd-container wd-card">Loading weather…</div>;
-  if (error)
+  }
+
+  if (error) {
     return <div className="wd-container wd-card wd-error">Error: {error}</div>;
+  }
+
+  // Render chart polyline points
+  const renderPolylinePoints = () =>
+    dayRows.map((_, i) => getChartCoords(i).join(",")).join(" ");
+
+  // Render area path under curve
+  const renderAreaPath = () => {
+    if (!dayRows.length) return "";
+    const { WIDTH, HEIGHT, PADDING } = CHART;
+
+    const pathSegments = dayRows.map((_, i) => {
+      const [x, y] = getChartCoords(i);
+      return i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
+    });
+
+    return `${pathSegments.join("")} L ${WIDTH - PADDING} ${
+      HEIGHT - PADDING
+    } L ${PADDING} ${HEIGHT - PADDING} Z`;
+  };
+
+  // Render tooltip for cursor
+  const renderTooltip = () => {
+    if (cursorIndex === null || !dayRows[cursorIndex]) return null;
+
+    const r = dayRows[cursorIndex];
+    const [cx, cy] = getChartCoords(cursorIndex);
+    const { WIDTH, HEIGHT } = CHART;
+
+    // Clamp tooltip position
+    const tx = Math.min(
+      Math.max(cx + TOOLTIP.OFFSET_X, 0),
+      WIDTH - TOOLTIP.WIDTH
+    );
+    const ty = Math.min(
+      Math.max(cy + TOOLTIP.OFFSET_Y, 0),
+      HEIGHT - TOOLTIP.HEIGHT
+    );
+
+    const tooltipData = [
+      {
+        label: "Temp",
+        value: `${r.temperature_2m.toFixed(1)}°C`,
+        color: "#fff",
+      },
+      {
+        label: "Humidity",
+        value: `${r.humidity_2m.toFixed(0)}%`,
+        color: "#ddd",
+      },
+      {
+        label: "Solar",
+        value: `${r.solar_radiation.toFixed(0)} W/m²`,
+        color: "#ddd",
+      },
+      {
+        label: "Apparent",
+        value: `${r.apparent_temperature.toFixed(1)}°C`,
+        color: "#ddd",
+      },
+      {
+        label: "Dew point",
+        value: `${r.dew_point_2m.toFixed(1)}°C`,
+        color: "#ddd",
+      },
+      { label: "Rain", value: `${r.rain.toFixed(1)} mm`, color: "#ddd" },
+      { label: "Snow", value: `${r.snowfall.toFixed(1)} mm`, color: "#ddd" },
+      {
+        label: "Wind",
+        value: `${r.windspeed_10m.toFixed(1)} m/s`,
+        color: "#ddd",
+      },
+    ];
+
+    return (
+      <g>
+        <line
+          x1={cx}
+          x2={cx}
+          y1={20}
+          y2={220}
+          stroke="#333"
+          strokeWidth="1"
+          strokeDasharray="3 3"
+          opacity="0.8"
+        />
+        <circle
+          cx={cx}
+          cy={cy}
+          r="5"
+          fill="#fff"
+          stroke="#ff7a18"
+          strokeWidth="2"
+        />
+        <rect
+          x={tx}
+          y={ty}
+          width={TOOLTIP.WIDTH}
+          height={TOOLTIP.HEIGHT}
+          rx="6"
+          fill="#222"
+          opacity="0.95"
+        />
+        {tooltipData.map((item, i) => (
+          <text
+            key={item.label}
+            x={tx + 6}
+            y={ty + 20 + i * 16}
+            fill={item.color}
+            fontSize={i === 0 ? "12" : "11"}
+          >
+            {item.label}: {item.value}
+          </text>
+        ))}
+        <text x={tx + 6} y={ty + 148} fill="#ccc" fontSize="11">
+          {formatHour(r.date)}
+        </text>
+      </g>
+    );
+  };
 
   return (
     <div className="wd-container wd-card">
@@ -247,97 +381,65 @@ export default function WeatherData({ username, loggedIn }) {
             Hourly temperature{address ? ` for ${address}` : ""}
           </h3>
 
-          {/* 7-day selector (today + next 6 days) */}
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              marginBottom: 12,
-              flexWrap: "wrap",
-            }}
-          >
-            {next7Days.map((d) => {
-              const active = selectedDay === d.iso;
-              return (
-                <button
-                  key={d.iso}
-                  onClick={() => {
-                    setSelectedDay(d.iso);
-                    setCursorIndex(null);
-                  }}
-                  className={`wd-day-btn ${active ? "wd-day-btn-active" : ""}`}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 8,
-                    border: active ? "1px solid #ff7a18" : "1px solid #eee",
-                    background: active ? "#fff8f2" : "#fff",
-                    cursor: "pointer",
-                    minWidth: 64,
-                    textAlign: "center",
-                  }}
-                >
-                  <div style={{ fontSize: 12 }}>{d.label}</div>
-                  <div style={{ fontSize: 11, color: "#555" }}>
-                    {d.dateObj.getMonth() + 1}/{d.dateObj.getDate()}
-                  </div>
-                </button>
-              );
-            })}
+          {/* 7-day selector */}
+          <div className="wd-day-selector">
+            {next7Days.map((d) => (
+              <button
+                key={d.iso}
+                onClick={() => handleDaySelect(d.iso)}
+                className={`wd-day-btn ${
+                  selectedDay === d.iso ? "wd-day-btn-active" : ""
+                }`}
+              >
+                <div className="wd-day-label">{d.label}</div>
+                <div className="wd-day-date">
+                  {d.dateObj.getMonth() + 1}/{d.dateObj.getDate()}
+                </div>
+              </button>
+            ))}
           </div>
 
-          {/* top metrics (kept from your original) */}
-          <div className="wd-metrics">
-            {currentHourRow && (
-              <>
-                <div className="wd-metric">
-                  <div className="wd-metric-label">Rain</div>
-                  <div className="wd-metric-value">
-                    {currentHourRow.rain > 0
-                      ? `${currentHourRow.rain.toFixed(1)} mm`
-                      : "0 mm"}
-                  </div>
-                </div>
-                <div className="wd-metric">
-                  <div className="wd-metric-label">Snow</div>
-                  <div className="wd-metric-value">
-                    {currentHourRow.snowfall > 0
-                      ? `${currentHourRow.snowfall.toFixed(1)} mm`
-                      : "0 mm"}
-                  </div>
-                </div>
-                <div className="wd-metric">
-                  <div className="wd-metric-label">Wind</div>
-                  <div className="wd-metric-value">
-                    {currentHourRow.windspeed_10m.toFixed(1)} m/s
-                  </div>
-                </div>
-                <div className="wd-metric">
-                  <div className="wd-metric-label">Humidity</div>
-                  <div className="wd-metric-value">
-                    {currentHourRow.humidity_2m.toFixed(0)}%
-                  </div>
-                </div>
-                <div className="wd-metric">
-                  <div className="wd-metric-label">Solar</div>
-                  <div className="wd-metric-value">
-                    {currentHourRow.solar_radiation.toFixed(0)} W/m²
-                  </div>
-                </div>
-                <div className="wd-metric">
-                  <div className="wd-metric-label">Apparent Temperature</div>
-                  <div className="wd-metric-value">
-                    {currentHourRow.apparent_temperature.toFixed(0)}°C
-                  </div>
-                </div>
-                <div className="wd-metric">
-                  <div className="wd-metric-label">Dew Point</div>
-                  <div className="wd-metric-value">
-                    {currentHourRow.dew_point_2m.toFixed(0)}°C
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
+          {/* Weather metrics */}
+          {currentHourRow && (
+            <div className="wd-metrics">
+              <MetricItem
+                label="Rain"
+                value={
+                  currentHourRow.rain > 0
+                    ? `${currentHourRow.rain.toFixed(1)} mm`
+                    : "0 mm"
+                }
+              />
+              <MetricItem
+                label="Snow"
+                value={
+                  currentHourRow.snowfall > 0
+                    ? `${currentHourRow.snowfall.toFixed(1)} mm`
+                    : "0 mm"
+                }
+              />
+              <MetricItem
+                label="Wind"
+                value={`${currentHourRow.windspeed_10m.toFixed(1)} m/s`}
+              />
+              <MetricItem
+                label="Humidity"
+                value={`${currentHourRow.humidity_2m.toFixed(0)}%`}
+              />
+              <MetricItem
+                label="Solar"
+                value={`${currentHourRow.solar_radiation.toFixed(0)} W/m²`}
+              />
+              <MetricItem
+                label="Apparent Temperature"
+                value={`${currentHourRow.apparent_temperature.toFixed(0)}°C`}
+              />
+              <MetricItem
+                label="Dew Point"
+                value={`${currentHourRow.dew_point_2m.toFixed(0)}°C`}
+              />
+            </div>
+          )}
         </div>
 
         <div className="wd-current">
@@ -352,7 +454,7 @@ export default function WeatherData({ username, loggedIn }) {
 
       {dayRows.length === 0 ? (
         <div className="wd-empty">
-          No hourly rows available for the selected day (00:00–23:00).
+          No hourly data available for the selected day.
         </div>
       ) : (
         <div
@@ -363,55 +465,40 @@ export default function WeatherData({ username, loggedIn }) {
           <svg
             ref={svgRef}
             className="wd-chart"
-            viewBox="0 0 800 240"
+            viewBox={`0 0 ${CHART.WIDTH} ${CHART.HEIGHT}`}
             preserveAspectRatio="none"
           >
-            {/* grid lines */}
-            {[0, 0.25, 0.5, 0.75, 1].map((g, gi) => {
-              const y = 30 + g * (240 - 60);
-              const t = (maxT - g * (maxT - minT)).toFixed(0);
+            {/* Grid lines */}
+            {CHART.GRID_STEPS.map((g, gi) => {
+              const y = CHART.PADDING + g * (CHART.HEIGHT - CHART.PADDING * 2);
+              const temp = (maxT - g * (maxT - minT)).toFixed(0);
               return (
                 <g key={gi}>
                   <line
                     x1="0"
-                    x2="800"
+                    x2={CHART.WIDTH}
                     y1={y}
                     y2={y}
                     stroke="#eee"
                     strokeWidth="1"
                   />
                   <text x="6" y={y - 6} fill="#888" fontSize="10">
-                    {t}°C
+                    {temp}°C
                   </text>
                 </g>
               );
             })}
 
-            {/* temperature polyline */}
+            {/* Temperature line */}
             <polyline
               fill="none"
               stroke="#ff7a18"
               strokeWidth="2"
-              points={dayRows
-                .map((r, i) => coordsForIndex(i, 800, 240, 30).join(","))
-                .join(" ")}
+              points={renderPolylinePoints()}
             />
 
-            {/* subtle area under curve */}
-            <path
-              d={(() => {
-                if (!dayRows.length) return "";
-                let d = "";
-                dayRows.forEach((r, i) => {
-                  const [x, y] = coordsForIndex(i, 800, 240, 30);
-                  d += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
-                });
-                d += ` L ${800 - 30} ${240 - 30} L ${30} ${240 - 30} Z`;
-                return d;
-              })()}
-              fill="url(#grad)"
-              opacity="0.12"
-            />
+            {/* Area under curve */}
+            <path d={renderAreaPath()} fill="url(#grad)" opacity="0.12" />
 
             <defs>
               <linearGradient id="grad" x1="0" x2="0" y1="0" y2="1">
@@ -420,95 +507,19 @@ export default function WeatherData({ username, loggedIn }) {
               </linearGradient>
             </defs>
 
-            {/* interactive cursor for dayRows */}
-            {cursorIndex !== null &&
-              dayRows[cursorIndex] &&
-              (() => {
-                const r = dayRows[cursorIndex];
-                const [cx, cy] = coordsForIndex(cursorIndex, 800, 240, 30);
+            {/* Interactive tooltip */}
+            {renderTooltip()}
 
-                // Tooltip size
-                const tooltipW = 180;
-                const tooltipH = 170;
-                const offsetX = 8;
-                const offsetY = -58;
-
-                // Clamp tooltip inside chart
-                const tx = Math.min(Math.max(cx + offsetX, 0), 800 - tooltipW);
-                const ty = Math.min(Math.max(cy + offsetY, 0), 240 - tooltipH);
-
-                return (
-                  <g>
-                    <line
-                      x1={cx}
-                      x2={cx}
-                      y1={20}
-                      y2={220}
-                      stroke="#333"
-                      strokeWidth="1"
-                      strokeDasharray="3 3"
-                      opacity="0.8"
-                    />
-                    <circle
-                      cx={cx}
-                      cy={cy}
-                      r="5"
-                      fill="#fff"
-                      stroke="#ff7a18"
-                      strokeWidth="2"
-                    />
-
-                    <rect
-                      x={tx}
-                      y={ty}
-                      width={tooltipW}
-                      height={tooltipH}
-                      rx="6"
-                      fill="#222"
-                      opacity="0.95"
-                    />
-
-                    <text x={tx + 6} y={ty + 20} fill="#fff" fontSize="12">
-                      Temp: {r.temperature_2m.toFixed(1)}°C
-                    </text>
-                    <text x={tx + 6} y={ty + 36} fill="#ddd" fontSize="11">
-                      Humidity: {r.humidity_2m.toFixed(0)}%
-                    </text>
-                    <text x={tx + 6} y={ty + 52} fill="#ddd" fontSize="11">
-                      Solar: {r.solar_radiation.toFixed(0)} W/m²
-                    </text>
-                    <text x={tx + 6} y={ty + 68} fill="#ddd" fontSize="11">
-                      Apparent: {r.apparent_temperature.toFixed(1)}°C
-                    </text>
-                    <text x={tx + 6} y={ty + 84} fill="#ddd" fontSize="11">
-                      Dew point: {r.dew_point_2m.toFixed(1)}°C
-                    </text>
-                    <text x={tx + 6} y={ty + 100} fill="#ddd" fontSize="11">
-                      Rain: {r.rain.toFixed(1)} mm
-                    </text>
-                    <text x={tx + 6} y={ty + 116} fill="#ddd" fontSize="11">
-                      Snow: {r.snowfall.toFixed(1)} mm
-                    </text>
-                    <text x={tx + 6} y={ty + 132} fill="#ddd" fontSize="11">
-                      Wind: {r.windspeed_10m.toFixed(1)} m/s
-                    </text>
-                    <text x={tx + 6} y={ty + 148} fill="#ccc" fontSize="11">
-                      {formatHour(r.date)}
-                    </text>
-                  </g>
-                );
-              })()}
-
-            {/* x-axis labels for 00:00-23:00 */}
+            {/* X-axis labels */}
             {dayRows.map((r, i) => {
-              // render up to 8 labels evenly spaced
-              if (i % Math.ceil(dayRows.length / 8) !== 0) return null;
-              const [x] = coordsForIndex(i, 800, 240, 30);
+              if (i % Math.ceil(dayRows.length / CHART.LABELS_COUNT) !== 0)
+                return null;
+              const [x] = getChartCoords(i);
               return (
                 <text
                   key={i}
                   x={x}
-                  y={235}
+                  y={CHART.HEIGHT - 5}
                   fontSize="11"
                   fill="#555"
                   textAnchor="middle"
@@ -523,3 +534,11 @@ export default function WeatherData({ username, loggedIn }) {
     </div>
   );
 }
+
+// Reusable metric component
+const MetricItem = ({ label, value }) => (
+  <div className="wd-metric">
+    <div className="wd-metric-label">{label}</div>
+    <div className="wd-metric-value">{value}</div>
+  </div>
+);

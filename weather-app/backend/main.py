@@ -1,58 +1,84 @@
-import sys
-import os
-from pathlib import Path
-from datetime import datetime
-import zoneinfo
+"""
+Weather App Backend Server
+FastAPI application with CORS support for the weather simulation app.
+"""
 
-from fastapi import FastAPI, HTTPException, Response
+import sys
+from pathlib import Path
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from dotenv import load_dotenv
 
+# Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# --- API Router Imports ---
+# Import routers
 from api.user_data_collection.house_api import router as house_router
 from api.user_data_collection.address_to_latlon import router as geocode_router
 from api.user_data_collection.weather_api import router as weather_router
 from api.authentication.auth_api import router as auth_router
 from api.hvac_simulation.indoor_temp_simulation import run_simulation_step
 
-# --- App Configuration ---
+# ============================================================
+# Configuration
+# ============================================================
+
 load_dotenv()
 
-app = FastAPI()
+ALLOWED_ORIGINS = ["http://localhost:5173"]
+
+# ============================================================
+# App Setup
+# ============================================================
+
+app = FastAPI(
+    title="Weather App API",
+    description="Backend API for weather simulation and HVAC management",
+    version="1.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ============================================================
+# Routes
+# ============================================================
+
 @app.get("/api/simulation/{username}")
 def get_simulation_step(username: str):
+    """Run one simulation step for the given user."""
     try:
         result = run_simulation_step(username)
         if "error" in result:
             raise HTTPException(status_code=404, detail=result["error"])
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Simulation Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- Router Registration ---
-app.include_router(house_router)
-app.include_router(geocode_router)
-app.include_router(weather_router)
-app.include_router(auth_router)
 
-# --- Entry Point ---
+# Register routers
+app.include_router(house_router, tags=["House"])
+app.include_router(geocode_router, tags=["Geocoding"])
+app.include_router(weather_router, tags=["Weather"])
+app.include_router(auth_router, tags=["Authentication"])
+
+# ============================================================
+# Entry Point
+# ============================================================
+
 if __name__ == "__main__":
+    import uvicorn
+    
     try:
-        import uvicorn
         uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
     except Exception as e:
-        print("Error starting server. Ensure uvicorn is installed.")
-        print(e)
+        print(f"Error starting server: {e}")
+        print("Ensure uvicorn is installed: pip install uvicorn")
