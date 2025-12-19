@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from pathlib import Path
 from typing import Optional, List
-from datetime import datetime
 from database import db
 
 router = APIRouter()
@@ -41,6 +40,29 @@ def save_house_variables(vars: HouseVariables):
         ok = db.set_user_house(vars.username, house_obj)
         if not ok:
             raise HTTPException(status_code=404, detail="user not found")
+
+        # Initialize simulated indoor temp on first house submission so
+        # `/api/simulation/{username}` can start immediately.
+        user_id = db.get_user_id(vars.username)
+        if user_id is not None and db.get_simulated_temp(user_id) is None:
+            initial_temp = 70.0
+            raw_weather = db.get_user_weather(vars.username)
+
+            weather_rows = None
+            if isinstance(raw_weather, dict):
+                weather_rows = raw_weather.get("rows")
+            elif isinstance(raw_weather, list):
+                weather_rows = raw_weather
+
+            if weather_rows and isinstance(weather_rows, list) and len(weather_rows) > 0:
+                first_row = weather_rows[0]
+                if isinstance(first_row, dict) and "temperature_2m" in first_row:
+                    try:
+                        initial_temp = float(first_row["temperature_2m"])
+                    except Exception:
+                        initial_temp = 70.0
+
+            db.update_simulated_temp(user_id, initial_temp)
         return {"status": "ok", "saved": "db"}
     except HTTPException:
         raise
