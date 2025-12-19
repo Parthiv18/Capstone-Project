@@ -1,6 +1,5 @@
 from database.db import (
     get_user_state,
-    get_last_updated,
     update_simulated_temp,
 )
 
@@ -52,6 +51,44 @@ def simulate_indoor_temp_simple(
     return round(T_next, 2)
 
 
+def simulate_indoor_temp_basic(
+    indoor_temp: float,
+    outdoor_temp: float,
+    insulation_quality: str,
+    house_size_sqft: float,
+    timestep_minutes: int,
+) -> float:
+    """Simplified indoor temperature model.
+
+    Indoor temperature gradually approaches outdoor temperature.
+    Rate depends only on insulation quality and house size.
+    """
+
+    BASE_INSULATION_RATE = {
+        "poor": 0.030,
+        "average": 0.015,
+        "excellent": 0.007,
+    }
+
+    if insulation_quality not in BASE_INSULATION_RATE:
+        raise ValueError("Invalid insulation_quality")
+
+    if house_size_sqft <= 0:
+        return round(indoor_temp, 2)
+
+    k = BASE_INSULATION_RATE[insulation_quality]
+
+    # House size effect (thermal mass proxy)
+    size_multiplier = 1500.0 / house_size_sqft
+    size_multiplier = max(0.5, min(size_multiplier, 1.5))
+
+    k_eff = k * size_multiplier
+
+    timestep_scale = timestep_minutes / 5
+    T_next = indoor_temp + (outdoor_temp - indoor_temp) * k_eff * timestep_scale
+    return round(T_next, 2)
+
+
 def _parse_weather_row_time(date_str: str) -> datetime | None:
     """Parse weather row `date` like '2025-12-19 14:00:00 EST'.
 
@@ -88,55 +125,6 @@ def _select_weather_row(weather_rows: list[dict], target_time: datetime) -> dict
             best_abs_seconds = abs_seconds
             best_row = row
     return best_row
-
-
-def _estimate_internal_gains_w(
-    occupancy: str | None,
-    appliances: list[str] | None,
-    sim_time: datetime,
-    house_size_sqft: float,
-) -> float:
-    # Very rough internal gains model.
-    floor_area_m2 = max(house_size_sqft, 200.0) * 0.092903
-
-    # Baseline plug loads + standby, scales with size.
-    base = 2.5 * floor_area_m2  # W
-
-    hour = sim_time.hour
-    is_daytime = 8 <= hour <= 20
-
-    occupancy_gain = 0.0
-    if occupancy == "home_daytime":
-        occupancy_gain = 250.0 if is_daytime else 120.0
-    elif occupancy == "away_daytime":
-        occupancy_gain = 80.0 if is_daytime else 180.0
-    elif occupancy == "hybrid":
-        occupancy_gain = 160.0
-    else:
-        occupancy_gain = 140.0
-
-    appliance_gains = 0.0
-    for a in appliances or []:
-        if a == "Electric Space Heater":
-            appliance_gains += 500.0 if is_daytime else 200.0
-        elif a == "Portable Air Conditioner":
-            appliance_gains -= 350.0 if is_daytime else 0.0
-        elif a in ("Electric Water Heater", "Gas Water Heater"):
-            appliance_gains += 150.0
-        elif a.startswith("Oven") or a.startswith("Stove"):
-            appliance_gains += 120.0 if 16 <= hour <= 19 else 20.0
-        elif a.startswith("Clothes Dryer"):
-            appliance_gains += 80.0
-        elif a.startswith("Washing Machine"):
-            appliance_gains += 40.0
-        elif a.startswith("Dishwasher"):
-            appliance_gains += 40.0 if 18 <= hour <= 22 else 10.0
-        elif a.startswith("Electric Vehicle Charger"):
-            appliance_gains += 120.0 if 0 <= hour <= 6 else 0.0
-        else:
-            appliance_gains += 10.0
-
-    return base + occupancy_gain + appliance_gains
 
 
 def simulate_indoor_temp_rc(
@@ -225,8 +213,7 @@ def run_simulation_step(username: str):
 
     try:
         insulation = house_data["insulation_quality"]
-        house_size = float(house_data["home_size"])        # sqft
-        house_age = int(house_data["age_of_house"])         # years
+        house_size = float(house_data["home_size"])  # sqft
     except KeyError as e:
         return {"error": f"Missing house field: {e.args[0]}"}
 
@@ -265,8 +252,6 @@ def run_simulation_step(username: str):
         return {"error": "temperature_2m missing from weather data"}
 
     outdoor_temp = float(weather["temperature_2m"])
-    solar_radiation = float(weather.get("solar_radiation") or 0.0)
-    windspeed_10m = float(weather.get("windspeed_10m") or 0.0)
 
     # -------------------------------------------------
     # 4. Indoor Temperature (NO DEFAULT)
@@ -282,30 +267,18 @@ def run_simulation_step(username: str):
     # 5. Simulate
     # -------------------------------------------------
     timestep_minutes = 5
-    internal_gains_w = _estimate_internal_gains_w(
-        occupancy=house_data.get("occupancy"),
-        appliances=(house.get("appliances") if isinstance(house, dict) else None),
-        sim_time=sim_time,
-        house_size_sqft=house_size,
-    )
-
-    new_temp = simulate_indoor_temp_rc(
-        indoor_temp_c=float(indoor_temp),
-        outdoor_temp_c=outdoor_temp,
+    new_temp = simulate_indoor_temp_basic(
+        indoor_temp=float(indoor_temp),
+        outdoor_temp=outdoor_temp,
         insulation_quality=insulation,
         house_size_sqft=house_size,
-        house_age_years=house_age,
         timestep_minutes=timestep_minutes,
-        solar_radiation_w_m2=solar_radiation,
-        windspeed_10m_m_s=windspeed_10m,
-        internal_gains_w=internal_gains_w,
     )
 
     # -------------------------------------------------
     # 6. Save
     # -------------------------------------------------
     update_simulated_temp(user_id, new_temp)
-    last_updated = get_last_updated(user_id)
 
     # -------------------------------------------------
     # 7. Response
@@ -313,11 +286,4 @@ def run_simulation_step(username: str):
     return {
         "T_in_prev": indoor_temp,
         "T_in_new": new_temp,
-        "T_out": outdoor_temp,
-        "hvac_mode": "off",
-        "last_updated": last_updated,
-        "weather_time": weather.get("date"),
-        "insulation_quality": insulation,
-        "house_size_sqft": house_size,
-        "house_age_years": house_age,
     }
