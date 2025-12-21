@@ -21,7 +21,10 @@ from api.alerts_simulation.alerts import router as alerts_router
 from api.hvac_simulation.indoor_temp_simulation import (
     run_simulation_step,
     run_hvac_ai,
-    run_simulation_step_with_hvac
+    run_simulation_step_with_hvac,
+    update_target_setpoint,
+    get_current_setpoint,
+    get_hvac_schedule_summary
 )
 
 # ============================================================
@@ -103,6 +106,61 @@ def refresh_hvac_schedule(username: str, target_temp: float = None):
         raise
     except Exception as e:
         print(f"HVAC Refresh Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/setpoint/{username}")
+def set_thermostat_setpoint(username: str, target_temp: float):
+    """
+    Update the user's target temperature setpoint.
+    Called when user adjusts the thermostat.
+    
+    Query params:
+        target_temp: New target temperature in Celsius
+    """
+    try:
+        result = update_target_setpoint(username, target_temp)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Setpoint Update Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/setpoint/{username}")
+def get_thermostat_setpoint(username: str):
+    """
+    Get the user's current target temperature setpoint.
+    """
+    try:
+        result = get_current_setpoint(username)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Setpoint Get Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/hvac/{username}/summary")
+def get_hvac_summary(username: str):
+    """
+    Get a summary of the current HVAC schedule.
+    """
+    try:
+        result = get_hvac_schedule_summary(username)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"HVAC Summary Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -11,7 +11,7 @@ const INITIAL_FORM_DATA = {
   insulation_quality: "",
   hvac_type: "",
   hvac_age: "",
-  personal_comfort: 25,
+  personal_comfort: 22, // Target temperature in Celsius (realistic range: 15-30)
   occupancy: "",
 };
 
@@ -84,7 +84,7 @@ const normalizeIncomingHouse = (raw) => {
       insulation_quality: insulation_quality ?? "",
       hvac_type: hvac_type ?? "",
       hvac_age: hvac_age ?? "",
-      personal_comfort: personal_comfort ?? 25,
+      personal_comfort: personal_comfort ?? 22, // Default 22°C
       occupancy: occupancy ?? "",
     },
     appliances: Array.isArray(appliances) ? appliances : [],
@@ -399,16 +399,27 @@ const Page3 = ({ appliances, options, onToggle, onBack, onNext }) => (
 
 const Page4 = ({ data, updateField, onBack, onSubmit, submitting, error }) => (
   <>
-    <FormField label="Personal Comfort (°C)">
+    <FormField label="Target Temperature (°C)">
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ minWidth: 36, color: "#666" }}>15°C</span>
         <input
           type="range"
-          min="0"
-          max="100"
+          min="15"
+          max="30"
+          step="0.5"
           value={data.personal_comfort}
-          onChange={(e) => updateField("personal_comfort", e.target.value)}
+          onChange={(e) =>
+            updateField("personal_comfort", parseFloat(e.target.value))
+          }
+          style={{ flex: 1 }}
         />
-        <span style={{ minWidth: 36 }}>{data.personal_comfort}°C</span>
+        <span style={{ minWidth: 50, fontWeight: "bold", color: "#ff7a18" }}>
+          {data.personal_comfort}°C
+        </span>
+      </div>
+      <div style={{ fontSize: "12px", color: "#888", marginTop: "4px" }}>
+        This is your preferred indoor temperature. The HVAC will try to maintain
+        this.
       </div>
     </FormField>
     <SelectField

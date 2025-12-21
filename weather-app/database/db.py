@@ -60,7 +60,7 @@ def _ensure_schema():
                 user_id INTEGER PRIMARY KEY,
                 sim_inside_temp REAL NOT NULL,
                 hvac_sim TEXT,
-                target_setpoint REAL DEFAULT 22.0,
+                target_setpoint REAL DEFAULT NULL,
                 appliance_alerts TEXT,
                 last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
@@ -69,7 +69,7 @@ def _ensure_schema():
         
         # Add target_setpoint column if it doesn't exist (migration for existing DBs)
         try:
-            cur.execute("ALTER TABLE user_thermostat ADD COLUMN target_setpoint REAL DEFAULT 22.0")
+            cur.execute("ALTER TABLE user_thermostat ADD COLUMN target_setpoint REAL DEFAULT NULL")
         except:
             pass  # Column already exists
         
@@ -78,6 +78,18 @@ def _ensure_schema():
             cur.execute("ALTER TABLE user_thermostat ADD COLUMN appliance_alerts TEXT")
         except:
             pass  # Column already exists
+        
+        # Clear old default 22.0 setpoints to allow personal_comfort fallback
+        # Only clear if user hasn't manually adjusted (sim_inside_temp would be exactly 22.0 too)
+        try:
+            cur.execute("""
+                UPDATE user_thermostat 
+                SET target_setpoint = NULL 
+                WHERE target_setpoint = 22.0 
+                AND (sim_inside_temp IS NULL OR sim_inside_temp = 22.0 OR sim_inside_temp = 20.0)
+            """)
+        except:
+            pass
 
 
 # Initialize schema on module import
@@ -365,13 +377,23 @@ def set_target_setpoint(user_id: int, setpoint: float) -> bool:
     """Set user's target temperature setpoint."""
     with get_connection() as conn:
         cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO user_thermostat (user_id, sim_inside_temp, target_setpoint, last_updated)
-            VALUES (?, 22.0, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(user_id) DO UPDATE SET
-                target_setpoint = excluded.target_setpoint,
-                last_updated = CURRENT_TIMESTAMP
-        """, (user_id, setpoint))
+        # First check if user already has a thermostat record
+        cur.execute("SELECT sim_inside_temp FROM user_thermostat WHERE user_id = ?", (user_id,))
+        existing = cur.fetchone()
+        
+        if existing:
+            # Update existing record
+            cur.execute("""
+                UPDATE user_thermostat 
+                SET target_setpoint = ?, last_updated = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+            """, (setpoint, user_id))
+        else:
+            # Create new record - use 20.0 as default indoor temp (will be updated by simulation)
+            cur.execute("""
+                INSERT INTO user_thermostat (user_id, sim_inside_temp, target_setpoint, last_updated)
+                VALUES (?, 20.0, ?, CURRENT_TIMESTAMP)
+            """, (user_id, setpoint))
         return True
 
 

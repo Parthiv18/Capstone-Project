@@ -107,6 +107,23 @@ export const Backend = {
       )}/refresh?target_temp=${targetTemp}`,
       { method: "POST" }
     ),
+
+  // Setpoint management
+  getSetpoint: (username) =>
+    apiRequest(`${API_BASE}/api/setpoint/${encodeURIComponent(username)}`),
+
+  updateSetpoint: (username, targetTemp) =>
+    apiRequest(
+      `${API_BASE}/api/setpoint/${encodeURIComponent(username)}?target_temp=${targetTemp}`,
+      { method: "POST" }
+    ),
+
+  // Temporary adjustment with AI
+  applyTempAdjustment: (username, adjustment, duration = 60) =>
+    apiRequest(
+      `${API_BASE}/api/hvac/${encodeURIComponent(username)}/temp-adjust?adjustment=${adjustment}&duration=${duration}`,
+      { method: "POST" }
+    ),
 };
 
 /**

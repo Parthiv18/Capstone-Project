@@ -40,9 +40,62 @@
   color: #a0aec0;
 }
 
+.th-temp-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
 .th-temp {
   font-size: 42px;
   font-weight: 600;
+  transition: color 0.3s ease;
+}
+
+.th-temp.temp-rising {
+  color: #ff6b35;
+}
+
+.th-temp.temp-falling {
+  color: #00bcd4;
+}
+
+.th-trend-indicator {
+  font-size: 18px;
+  font-weight: bold;
+  animation: pulse 1s infinite;
+}
+
+.th-trend-indicator.rising {
+  color: #ff6b35;
+}
+
+.th-trend-indicator.falling {
+  color: #00bcd4;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: translateY(0); }
+  50% { opacity: 0.6; }
+}
+
+@keyframes pulse-up {
+  0%, 100% { opacity: 1; transform: translateY(0); }
+  50% { opacity: 0.6; transform: translateY(-3px); }
+}
+
+@keyframes pulse-down {
+  0%, 100% { opacity: 1; transform: translateY(0); }
+  50% { opacity: 0.6; transform: translateY(3px); }
+}
+
+.th-trend-indicator.rising {
+  animation: pulse-up 1s infinite;
+}
+
+.th-trend-indicator.falling {
+  animation: pulse-down 1s infinite;
 }
 
 .th-temp.set {
@@ -53,6 +106,13 @@
   font-size: 13px;
   margin-top: 4px;
   font-weight: 500;
+}
+
+.th-status-subtext {
+  font-size: 11px;
+  margin-top: 2px;
+  color: #718096;
+  font-weight: 400;
 }
 
 /* Divider */
@@ -188,6 +248,13 @@
   border-radius: 8px;
   padding: 10px;
   border-left: 3px solid #4fd1c5;
+  transition: all 0.3s ease;
+}
+
+.th-notification-now {
+  background: #2d3748;
+  border-left-width: 4px;
+  box-shadow: 0 0 10px rgba(79, 209, 197, 0.3);
 }
 
 .th-notification-header {
@@ -195,6 +262,8 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 6px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .th-notification-mode {
@@ -204,6 +273,26 @@
   border-radius: 4px;
   color: #fff;
   text-transform: uppercase;
+}
+
+.th-notification-time-label {
+  font-size: 11px;
+  color: #4fd1c5;
+  font-weight: 600;
+  background: rgba(79, 209, 197, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.th-notification-now .th-notification-time-label {
+  background: rgba(79, 209, 197, 0.3);
+  color: #81e6d9;
+  animation: pulse-glow 1.5s infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
 .th-notification-time {
