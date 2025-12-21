@@ -2,7 +2,7 @@
   width: 100%;
   background: #1e1e1e;
   border-radius: 20px;
-  padding: 30px 20px;
+  padding: 24px 20px;
   text-align: center;
   box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
   border: 1px solid #444;
@@ -15,7 +15,7 @@
   justify-content: space-between;
   font-size: 14px;
   color: #a0aec0;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .th-time {
@@ -27,6 +27,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 16px;
 }
 
 .th-section {
@@ -34,12 +35,13 @@
 }
 
 .th-label {
-  font-size: 14px;
-  margin-bottom: 6px;
+  font-size: 13px;
+  margin-bottom: 4px;
+  color: #a0aec0;
 }
 
 .th-temp {
-  font-size: 48px;
+  font-size: 42px;
   font-weight: 600;
 }
 
@@ -47,10 +49,16 @@
   color: #d5832e;
 }
 
+.th-status-text {
+  font-size: 13px;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
 /* Divider */
 .th-divider {
   width: 1px;
-  height: 80px;
+  height: 70px;
   background: #444;
 }
 
@@ -67,36 +75,217 @@
   height: 28px;
   border-radius: 50%;
   border: none;
-  font-size: 20px;
+  font-size: 18px;
   background: #2d3748;
   color: #ffffff;
   cursor: pointer;
+  transition: background 0.2s;
 }
 
-/* Heat / Cool buttons */
-.th-modes {
-  margin-top: 20px;
+.th-circle:hover {
+  background: #4a5568;
 }
 
-.th-mode-btn {
-  padding: 8px 20px;
-  border-radius: 20px;
-  border: none;
-  cursor: pointer;
-  background: #2d3748;
+/* Outside temperature */
+.th-outside {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid #333;
+  border-bottom: 1px solid #333;
+  margin-bottom: 16px;
+}
+
+.th-outside-label {
   color: #a0aec0;
-  margin-right: 8px;
-  pointer-events: none;
+  font-size: 13px;
 }
 
-.active-heat {
-  background: #d5832e;
-  color: white;
+.th-outside-temp {
+  color: #718096;
+  font-size: 16px;
+  font-weight: 600;
 }
 
-.active-cool {
-  background: #1e90ff;
-  color: white;
+/* Summary stats */
+.th-summary {
+  display: flex;
+  justify-content: space-around;
+  padding: 12px 0;
+  background: #252525;
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+
+.th-summary-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.th-summary-label {
+  font-size: 11px;
+  color: #a0aec0;
+  margin-bottom: 2px;
+}
+
+.th-summary-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #4fd1c5;
+}
+
+/* Notifications section */
+.th-notifications {
+  background: #252525;
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+.th-notifications-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.th-notifications-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.th-loading {
+  font-size: 11px;
+  color: #a0aec0;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.th-notifications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.th-notification {
+  background: #1e1e1e;
+  border-radius: 8px;
+  padding: 10px;
+  border-left: 3px solid #4fd1c5;
+}
+
+.th-notification-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.th-notification-mode {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #fff;
+  text-transform: uppercase;
+}
+
+.th-notification-time {
+  font-size: 12px;
+  color: #a0aec0;
+  font-weight: 500;
+}
+
+.th-notification-details {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 4px;
+}
+
+.th-notification-power,
+.th-notification-cost {
+  font-size: 12px;
+  color: #e2e8f0;
+}
+
+.th-notification-reason {
+  font-size: 11px;
+  color: #718096;
+  line-height: 1.3;
+}
+
+.th-notifications-empty {
+  text-align: center;
+  padding: 16px;
+  color: #718096;
+  font-size: 13px;
+}
+
+.th-error {
+  color: #fc8181;
+}
+
+/* AI status indicator */
+.th-ai-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #718096;
+}
+
+.th-ai-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #48bb78;
+  animation: blink 2s infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Scrollbar styling */
+.th-notifications-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.th-notifications-list::-webkit-scrollbar-track {
+  background: #1e1e1e;
+  border-radius: 2px;
+}
+
+.th-notifications-list::-webkit-scrollbar-thumb {
+  background: #4a5568;
+  border-radius: 2px;
+}
+
+.th-notifications-list::-webkit-scrollbar-thumb:hover {
+  background: #718096;
 }
 
 .active-off {

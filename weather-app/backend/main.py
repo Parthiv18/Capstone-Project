@@ -17,7 +17,11 @@ from api.user_data_collection.house_api import router as house_router
 from api.user_data_collection.address_to_latlon import router as geocode_router
 from api.user_data_collection.weather_api import router as weather_router
 from api.authentication.auth_api import router as auth_router
-from api.hvac_simulation.indoor_temp_simulation import run_simulation_step
+from api.hvac_simulation.indoor_temp_simulation import (
+    run_simulation_step,
+    run_hvac_ai,
+    run_simulation_step_with_hvac
+)
 
 # ============================================================
 # Configuration
@@ -53,7 +57,7 @@ app.add_middleware(
 def get_simulation_step(username: str):
     """Run one simulation step for the given user."""
     try:
-        result = run_simulation_step(username)
+        result = run_simulation_step_with_hvac(username)
         if "error" in result:
             raise HTTPException(status_code=404, detail=result["error"])
         return result
@@ -61,6 +65,43 @@ def get_simulation_step(username: str):
         raise
     except Exception as e:
         print(f"Simulation Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/hvac/{username}")
+def get_hvac_schedule(username: str, target_temp: float = None):
+    """
+    Generate and return the HVAC AI schedule for the given user.
+    
+    Query params:
+        target_temp: Desired temperature setpoint in Celsius (optional - uses saved value if not provided)
+    """
+    try:
+        result = run_hvac_ai(username, target_temp_c=target_temp)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"HVAC AI Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/hvac/{username}/refresh")
+def refresh_hvac_schedule(username: str, target_temp: float = None):
+    """
+    Force regenerate the HVAC schedule (useful after weather/house data changes).
+    """
+    try:
+        result = run_hvac_ai(username, target_temp_c=target_temp)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"HVAC Refresh Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

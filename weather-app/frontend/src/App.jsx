@@ -88,6 +88,22 @@ export const Backend = {
   // Simulation
   getSimulation: (username) =>
     apiRequest(`${API_BASE}/api/simulation/${encodeURIComponent(username)}`),
+
+  // HVAC AI - no targetTemp param means use saved/default
+  getHVACSchedule: (username, targetTemp = null) => {
+    const url = targetTemp !== null
+      ? `${API_BASE}/api/hvac/${encodeURIComponent(username)}?target_temp=${targetTemp}`
+      : `${API_BASE}/api/hvac/${encodeURIComponent(username)}`;
+    return apiRequest(url);
+  },
+
+  refreshHVACSchedule: (username, targetTemp) =>
+    apiRequest(
+      `${API_BASE}/api/hvac/${encodeURIComponent(
+        username
+      )}/refresh?target_temp=${targetTemp}`,
+      { method: "POST" }
+    ),
 };
 
 /**

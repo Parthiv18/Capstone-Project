@@ -60,10 +60,17 @@ def _ensure_schema():
                 user_id INTEGER PRIMARY KEY,
                 sim_inside_temp REAL NOT NULL,
                 hvac_sim TEXT,
+                target_setpoint REAL DEFAULT 22.0,
                 last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
         """)
+        
+        # Add target_setpoint column if it doesn't exist (migration for existing DBs)
+        try:
+            cur.execute("ALTER TABLE user_thermostat ADD COLUMN target_setpoint REAL DEFAULT 22.0")
+        except:
+            pass  # Column already exists
 
 
 # Initialize schema on module import
@@ -335,6 +342,32 @@ def get_hvac_sim(user_id: int) -> Optional[Any]:
         return _from_json(row[0])
 
 
+def get_target_setpoint(user_id: int) -> Optional[float]:
+    """Get user's target temperature setpoint."""
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT target_setpoint FROM user_thermostat WHERE user_id = ?",
+            (user_id,)
+        )
+        row = cur.fetchone()
+        return row["target_setpoint"] if row and row["target_setpoint"] is not None else None
+
+
+def set_target_setpoint(user_id: int, setpoint: float) -> bool:
+    """Set user's target temperature setpoint."""
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO user_thermostat (user_id, sim_inside_temp, target_setpoint, last_updated)
+            VALUES (?, 22.0, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                target_setpoint = excluded.target_setpoint,
+                last_updated = CURRENT_TIMESTAMP
+        """, (user_id, setpoint))
+        return True
+
+
 # ============================================================
 # Composite Queries
 # ============================================================
@@ -354,6 +387,7 @@ def get_user_state(username: str) -> Optional[dict]:
         "simulated_temp": get_simulated_temp(user_id),
         "last_updated": get_last_updated(user_id),
         "hvac_sim": get_hvac_sim(user_id),
+        "target_setpoint": get_target_setpoint(user_id),
     }
 
 
