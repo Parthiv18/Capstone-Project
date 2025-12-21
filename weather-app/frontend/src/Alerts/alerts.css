@@ -71,61 +71,7 @@
   border-left: 4px solid #ff6b6b;
 }
 
-/* Daily Summary Section */
-.daily-summary {
-  background: linear-gradient(135deg, #1a3a2e 0%, #1e4d3d 100%);
-  padding: 16px;
-  border-radius: 12px;
-  margin-bottom: 16px;
-  border: 1px solid #2d5a4a;
-}
-
-.summary-title {
-  font-weight: 600;
-  color: #4ade80;
-  margin-bottom: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.summary-stats {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.stat-item {
-  background: rgba(0, 0, 0, 0.2);
-  padding: 10px 12px;
-  border-radius: 8px;
-}
-
-.stat-label {
-  font-size: 11px;
-  color: #88c0a7;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.stat-value {
-  font-size: 18px;
-  font-weight: 600;
-  color: #fff;
-  margin-top: 2px;
-}
-
-.summary-tip {
-  background: rgba(74, 222, 128, 0.1);
-  padding: 10px 12px;
-  border-radius: 8px;
-  color: #a7f3d0;
-  font-size: 13px;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
+/* Daily summary removed */
 
 /* Appliance Schedule Section */
 .appliance-schedules {

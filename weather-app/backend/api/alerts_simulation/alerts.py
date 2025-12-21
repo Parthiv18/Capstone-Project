@@ -207,13 +207,6 @@ Respond ONLY with valid JSON in this exact format (no markdown, no explanation o
             "alert_message": "User-friendly alert message"
         }}
     ],
-    "daily_summary": {{
-        "total_appliance_energy_kwh": 0.0,
-        "total_appliance_cost": 0.0,
-        "estimated_savings_percent": 0,
-        "peak_avoidance_hours": ["HH:MM-HH:MM"],
-        "tip": "General energy saving tip for today"
-    }},
     "alerts": [
         {{
             "type": "warning/info/success",
@@ -389,14 +382,7 @@ def generate_appliance_alerts(username: str, force_refresh: bool = False) -> Dic
         # Validate expected structure
         if "appliance_schedules" not in result:
             result["appliance_schedules"] = []
-        if "daily_summary" not in result:
-            result["daily_summary"] = {
-                "total_appliance_energy_kwh": 0,
-                "total_appliance_cost": 0,
-                "estimated_savings_percent": 0,
-                "peak_avoidance_hours": [],
-                "tip": "Run high-power appliances during off-peak hours"
-            }
+        # daily_summary intentionally removed per request
         if "alerts" not in result:
             result["alerts"] = []
         

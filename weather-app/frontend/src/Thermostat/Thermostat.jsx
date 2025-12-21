@@ -437,19 +437,6 @@ export default function Thermostat({ username }) {
         </div>
       </div>
 
-      {/* Outside Temperature */}
-      {outsideTemp !== "--" && (
-        <div className="th-outside">
-          <span className="th-outside-label">Outside:</span>
-          <span className="th-outside-temp">
-            {typeof outsideTemp === "number"
-              ? outsideTemp.toFixed(1)
-              : outsideTemp}
-            °C
-          </span>
-        </div>
-      )}
-
       {/* Summary Stats */}
       {summary && (
         <div className="th-summary">

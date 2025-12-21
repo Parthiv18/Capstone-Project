@@ -146,13 +146,8 @@ export default function Alerts({ username }) {
     );
   }
 
-  const {
-    appliance_schedules,
-    daily_summary,
-    alerts,
-    generated_date,
-    generated_time,
-  } = alertsData;
+  const { appliance_schedules, alerts, generated_date, generated_time } =
+    alertsData;
 
   return (
     <div className="alert-card">
@@ -171,54 +166,11 @@ export default function Alerts({ username }) {
         </button>
       </div>
 
-      {/* Daily Summary */}
-      {daily_summary && (
-        <div className="daily-summary">
-          <div className="summary-title">
-            <span>📊</span> Today's Energy Summary
-          </div>
-          <div className="summary-stats">
-            <div className="stat-item">
-              <div className="stat-label">Est. Energy</div>
-              <div className="stat-value">
-                {daily_summary.total_appliance_energy_kwh?.toFixed(1) || "0"}{" "}
-                kWh
-              </div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-label">Est. Cost</div>
-              <div className="stat-value">
-                ${daily_summary.total_appliance_cost?.toFixed(2) || "0.00"}
-              </div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-label">Savings</div>
-              <div className="stat-value">
-                ~{daily_summary.estimated_savings_percent || 0}%
-              </div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-label">Peak Avoid</div>
-              <div className="stat-value" style={{ fontSize: "12px" }}>
-                {daily_summary.peak_avoidance_hours?.join(", ") || "N/A"}
-              </div>
-            </div>
-          </div>
-          {daily_summary.tip && (
-            <div className="summary-tip">
-              <span>💡</span>
-              <span>{daily_summary.tip}</span>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Daily summary removed per request */}
 
       {/* Appliance Schedules */}
       {appliance_schedules && appliance_schedules.length > 0 && (
         <div className="appliance-schedules">
-          <div className="schedules-title">
-            <span>📅</span> Optimal Appliance Schedule
-          </div>
           <div className="schedule-list">
             {appliance_schedules.map((schedule, index) => (
               <div
