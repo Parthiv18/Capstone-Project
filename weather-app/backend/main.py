@@ -17,6 +17,7 @@ from api.user_data_collection.house_api import router as house_router
 from api.user_data_collection.address_to_latlon import router as geocode_router
 from api.user_data_collection.weather_api import router as weather_router
 from api.authentication.auth_api import router as auth_router
+from api.alerts_simulation.alerts import router as alerts_router
 from api.hvac_simulation.indoor_temp_simulation import (
     run_simulation_step,
     run_hvac_ai,
@@ -110,6 +111,7 @@ app.include_router(house_router, tags=["House"])
 app.include_router(geocode_router, tags=["Geocoding"])
 app.include_router(weather_router, tags=["Weather"])
 app.include_router(auth_router, tags=["Authentication"])
+app.include_router(alerts_router, prefix="/api", tags=["Alerts"])
 
 # ============================================================
 # Entry Point

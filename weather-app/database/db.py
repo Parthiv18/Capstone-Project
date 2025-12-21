@@ -61,6 +61,7 @@ def _ensure_schema():
                 sim_inside_temp REAL NOT NULL,
                 hvac_sim TEXT,
                 target_setpoint REAL DEFAULT 22.0,
+                appliance_alerts TEXT,
                 last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
@@ -69,6 +70,12 @@ def _ensure_schema():
         # Add target_setpoint column if it doesn't exist (migration for existing DBs)
         try:
             cur.execute("ALTER TABLE user_thermostat ADD COLUMN target_setpoint REAL DEFAULT 22.0")
+        except:
+            pass  # Column already exists
+        
+        # Add appliance_alerts column if it doesn't exist (migration for existing DBs)
+        try:
+            cur.execute("ALTER TABLE user_thermostat ADD COLUMN appliance_alerts TEXT")
         except:
             pass  # Column already exists
 
@@ -369,6 +376,36 @@ def set_target_setpoint(user_id: int, setpoint: float) -> bool:
 
 
 # ============================================================
+# Appliance Alerts Data
+# ============================================================
+
+def get_appliance_alerts(user_id: int) -> Optional[Any]:
+    """Get user's appliance alerts/schedules."""
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT appliance_alerts FROM user_thermostat WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        
+        if not row or row[0] is None:
+            return None
+        
+        return _from_json(row[0])
+
+
+def set_appliance_alerts(user_id: int, alerts: Any) -> bool:
+    """Store appliance alerts/schedules for a user."""
+    payload = _to_json(alerts)
+    
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE user_thermostat SET appliance_alerts = ?, last_updated = CURRENT_TIMESTAMP WHERE user_id = ?",
+            (payload, user_id)
+        )
+        return cur.rowcount > 0
+
+
+# ============================================================
 # Composite Queries
 # ============================================================
 
@@ -388,6 +425,7 @@ def get_user_state(username: str) -> Optional[dict]:
         "last_updated": get_last_updated(user_id),
         "hvac_sim": get_hvac_sim(user_id),
         "target_setpoint": get_target_setpoint(user_id),
+        "appliance_alerts": get_appliance_alerts(user_id),
     }
 
 

@@ -185,7 +185,7 @@ export default function App() {
           <WeatherData username={username} loggedIn={loggedIn} />
           <Thermostat username={username} />
         </section>
-        <Alerts />
+        <Alerts username={username} />
       </main>
     </div>
   );
