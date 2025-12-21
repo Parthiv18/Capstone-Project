@@ -238,6 +238,15 @@ export default function Alerts({ username }) {
                   <span>
                     {schedule.optimal_start_time} - {schedule.optimal_end_time}
                   </span>
+                  {schedule.time_label && (
+                    <span
+                      className={`time-label ${
+                        schedule.time_label === "NOW" ? "now" : ""
+                      }`}
+                    >
+                      {schedule.time_label}
+                    </span>
+                  )}
                   <span style={{ color: "#666" }}>
                     ({schedule.duration_minutes} min)
                   </span>

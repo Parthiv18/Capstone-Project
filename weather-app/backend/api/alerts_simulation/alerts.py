@@ -95,26 +95,54 @@ def build_genai_prompt(
     current_temp_c: float,
     target_temp_c: float,
 ) -> str:
-    """Build a comprehensive prompt for GenAI to generate appliance schedules."""
+    """Build a comprehensive prompt for GenAI to generate appliance schedules starting from current time."""
     
-    # Format HVAC schedule info
+    # Get current time
+    now = datetime.now()
+    current_hour = now.hour
+    current_minute = now.minute
+    
+    # Format HVAC schedule info - only show present and future hours
     hvac_actions = hvac_schedule.get("actions", [])
     hvac_summary = []
     total_hvac_energy = hvac_schedule.get("total_energy_kwh", 0)
     
-    for action in hvac_actions[:12]:  # Show first 12 hours
-        mode = action.get("mode", "off")
-        hour = action.get("hour", 0)
-        power = action.get("power_kw", 0)
-        hvac_summary.append(f"Hour {hour:02d}:00 - Mode: {mode}, Power: {power:.2f} kW")
+    for action in hvac_actions:
+        action_hour = action.get("hour", 0)
+        # Calculate hours until this action
+        hours_diff = action_hour - current_hour
+        if hours_diff < 0:
+            hours_diff += 24
+        
+        # Only show current and next 12 hours
+        if hours_diff <= 12:
+            mode = action.get("mode", "off")
+            power = action.get("power_kw", 0)
+            
+            if hours_diff == 0:
+                time_label = "NOW"
+            elif hours_diff == 1:
+                time_label = "in 1 hour"
+            else:
+                time_label = f"in {hours_diff} hours"
+            
+            hvac_summary.append(f"{action_hour:02d}:00 ({time_label}): Mode: {mode}, Power: {power:.2f} kW")
     
-    # Format weather forecast
+    # Format weather forecast - only present and future
     weather_summary = []
     for i, row in enumerate(weather_data[:12]):  # First 12 hours
         temp = row.get("temperature_2m", 20)
         humidity = row.get("relative_humidity_2m", 50)
-        time_str = row.get("time", f"Hour {i}")
-        weather_summary.append(f"{time_str}: {temp}°C, {humidity}% humidity")
+        
+        if i == 0:
+            time_label = "NOW"
+        elif i == 1:
+            time_label = "in 1 hour"
+        else:
+            time_label = f"in {i} hours"
+        
+        forecast_hour = (current_hour + i) % 24
+        weather_summary.append(f"{forecast_hour:02d}:00 ({time_label}): {temp}°C, {humidity}% humidity")
     
     # Get appliance power info - use exact appliance names from house form
     appliance_info = []
@@ -126,7 +154,9 @@ def build_genai_prompt(
         heat_note = " (generates heat)" if is_heat_generator else ""
         appliance_info.append(f"- {app}: {power} kW, typical run time: {run_time} minutes{heat_note}")
     
-    prompt = f"""You are an energy optimization AI assistant. Analyze the following data and generate optimal appliance schedules to minimize energy costs and reduce HVAC load.
+    prompt = f"""You are an energy optimization AI assistant. Generate optimal appliance schedules starting from NOW.
+
+## CURRENT TIME: {current_hour:02d}:{current_minute:02d}
 
 ## House Information
 - Size: {house_data.get('home_size', 1500)} sqft
@@ -135,11 +165,11 @@ def build_genai_prompt(
 - Current Indoor Temperature: {current_temp_c:.1f}°C
 - Target Temperature: {target_temp_c:.1f}°C
 
-## HVAC Schedule (Next 12 Hours)
+## HVAC Schedule (Present & Future)
 Total HVAC Energy: {total_hvac_energy:.2f} kWh
 {chr(10).join(hvac_summary)}
 
-## Weather Forecast
+## Weather Forecast (Present & Future)
 {chr(10).join(weather_summary)}
 
 ## User's Appliances
@@ -147,7 +177,7 @@ Total HVAC Energy: {total_hvac_energy:.2f} kWh
 
 ## Task
 For each appliance, determine:
-1. The BEST time to run it (avoid HVAC peak hours)
+1. The BEST time to run it (MUST be present or future - starting from {current_hour:02d}:00 or later)
 2. Duration of operation
 3. Energy cost estimate (assume $0.15/kWh)
 4. Reason why this time is optimal
@@ -160,6 +190,8 @@ For each appliance, determine:
 - Stagger high-power appliances to avoid peak demand
 
 ## Required Output Format
+CRITICAL: All times MUST be {current_hour:02d}:00 or later (present/future only, NO past times).
+
 Respond ONLY with valid JSON in this exact format (no markdown, no explanation outside JSON):
 {{
     "appliance_schedules": [
@@ -367,6 +399,35 @@ def generate_appliance_alerts(username: str, force_refresh: bool = False) -> Dic
             }
         if "alerts" not in result:
             result["alerts"] = []
+        
+        # Post-process: Add time labels to appliance schedules
+        now = datetime.now()
+        current_hour = now.hour
+        current_minute = now.minute
+        
+        for schedule in result.get("appliance_schedules", []):
+            try:
+                start_time = schedule.get("optimal_start_time", "00:00")
+                start_hour = int(start_time.split(":")[0])
+                
+                # Calculate hours away from now
+                hours_diff = start_hour - current_hour
+                if hours_diff < 0:
+                    hours_diff += 24  # Handle next day times
+                
+                # Generate time label
+                if hours_diff == 0:
+                    time_label = "NOW"
+                elif hours_diff == 1:
+                    time_label = "in 1 hour"
+                else:
+                    time_label = f"in {hours_diff} hours"
+                
+                schedule["time_label"] = time_label
+                schedule["hours_away"] = hours_diff
+            except (ValueError, IndexError):
+                schedule["time_label"] = schedule.get("optimal_start_time", "")
+                schedule["hours_away"] = 0
         
         # Add metadata
         result["generated_date"] = datetime.now().strftime("%Y-%m-%d")
