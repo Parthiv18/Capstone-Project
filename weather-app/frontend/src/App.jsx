@@ -91,9 +91,12 @@ export const Backend = {
 
   // HVAC AI - no targetTemp param means use saved/default
   getHVACSchedule: (username, targetTemp = null) => {
-    const url = targetTemp !== null
-      ? `${API_BASE}/api/hvac/${encodeURIComponent(username)}?target_temp=${targetTemp}`
-      : `${API_BASE}/api/hvac/${encodeURIComponent(username)}`;
+    const url =
+      targetTemp !== null
+        ? `${API_BASE}/api/hvac/${encodeURIComponent(
+            username
+          )}?target_temp=${targetTemp}`
+        : `${API_BASE}/api/hvac/${encodeURIComponent(username)}`;
     return apiRequest(url);
   },
 
