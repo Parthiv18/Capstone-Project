@@ -404,13 +404,17 @@ def calc_q_hvac(
     mode: str,
     indoor_temp_c: float,
     target_temp_c: float,
-    outdoor_temp_c: float
+    outdoor_temp_c: float,
+    deadband: float = 0.3
 ) -> Tuple[float, float]:
     """
     Calculate HVAC heat output and power consumption.
     Returns (Q_hvac in Watts, Power draw in Watts)
     
     Q_hvac: positive = adding heat, negative = removing heat
+    
+    Uses smart proportional control with deadband to prevent overshooting.
+    HVAC reduces output as temperature approaches target.
     """
     if mode == "off":
         return 0.0, 0.0
@@ -418,21 +422,55 @@ def calc_q_hvac(
     temp_diff = target_temp_c - indoor_temp_c
     
     if mode in ["heat", "pre-heat"]:
-        if temp_diff <= 0:
+        # Stop heating if at or above target (with small buffer to prevent overshoot)
+        if temp_diff <= -deadband:
             return 0.0, 0.0
         
-        # Proportional control - output based on temp difference
-        output_fraction = min(1.0, abs(temp_diff) / 5.0)
+        # Reduce output significantly as we approach target to prevent overshoot
+        if temp_diff <= 0:
+            # We're at target or slightly above - minimal output
+            output_fraction = 0.05
+        elif temp_diff <= deadband:
+            # Very close to target - use minimal output
+            output_fraction = 0.1
+        elif temp_diff <= 1.0:
+            # Within 1°C - low output
+            output_fraction = 0.2 + (temp_diff - deadband) * 0.2
+        elif temp_diff <= 2.0:
+            # Within 2°C - moderate output
+            output_fraction = 0.4 + (temp_diff - 1.0) * 0.3
+        else:
+            # More than 2°C away - higher output, capped at 90%
+            output_fraction = min(0.9, 0.7 + (temp_diff - 2.0) * 0.1)
+        
         q_hvac = hvac.capacity_heating_w * output_fraction
         cop = hvac.get_cop_heating(outdoor_temp_c)
         power_draw = q_hvac / cop if cop > 0 else q_hvac
         return q_hvac, power_draw
     
     elif mode in ["cool", "pre-cool"]:
-        if temp_diff >= 0:
+        # Stop cooling if at or below target (with small buffer to prevent overshoot)
+        if temp_diff >= deadband:
             return 0.0, 0.0
         
-        output_fraction = min(1.0, abs(temp_diff) / 5.0)
+        # Reduce output significantly as we approach target to prevent overshoot
+        abs_diff = abs(temp_diff)
+        if temp_diff >= 0:
+            # We're at target or slightly below - minimal output
+            output_fraction = 0.05
+        elif abs_diff <= deadband:
+            # Very close to target - use minimal output
+            output_fraction = 0.1
+        elif abs_diff <= 1.0:
+            # Within 1°C - low output
+            output_fraction = 0.2 + (abs_diff - deadband) * 0.2
+        elif abs_diff <= 2.0:
+            # Within 2°C - moderate output
+            output_fraction = 0.4 + (abs_diff - 1.0) * 0.3
+        else:
+            # More than 2°C away - higher output, capped at 90%
+            output_fraction = min(0.9, 0.7 + (abs_diff - 2.0) * 0.1)
+        
         q_hvac = -hvac.capacity_cooling_w * output_fraction  # Negative = removing heat
         cop = hvac.get_cop_cooling(outdoor_temp_c)
         power_draw = abs(q_hvac) / cop if cop > 0 else abs(q_hvac)
@@ -477,6 +515,8 @@ def simulate_temperature_step(
     C_home × dT/dt = Q_solar + Q_wind + Q_conductive + Q_HVAC
     
     Returns: (new_temp_c, hvac_power_w, hvac_energy_kwh)
+    
+    Includes smart overshoot protection - won't exceed target by more than 0.5°C.
     """
     # Calculate all heat flows
     q_solar = calc_q_solar(house, weather)
@@ -490,6 +530,21 @@ def simulate_temperature_step(
     # Temperature change: dT = (Q_total × dt) / C_home
     dt = (q_total * timestep_seconds) / house.thermal_mass if house.thermal_mass > 0 else 0
     new_temp = indoor_temp_c + dt
+    
+    # Smart overshoot protection - clamp temperature to prevent overshooting target
+    max_overshoot = 0.5  # Allow only 0.5°C overshoot for comfort
+    if hvac_mode in ["heat", "pre-heat"]:
+        # When heating, don't let temp go more than max_overshoot above target
+        if new_temp > target_temp_c + max_overshoot:
+            new_temp = target_temp_c + max_overshoot
+            # Reduce power proportionally (we would have stopped sooner)
+            power_draw *= 0.3
+    elif hvac_mode in ["cool", "pre-cool"]:
+        # When cooling, don't let temp go more than max_overshoot below target
+        if new_temp < target_temp_c - max_overshoot:
+            new_temp = target_temp_c - max_overshoot
+            # Reduce power proportionally
+            power_draw *= 0.3
     
     # Energy consumption for this timestep
     energy_kwh = (power_draw * timestep_seconds) / (1000 * 3600)  # W·s to kWh

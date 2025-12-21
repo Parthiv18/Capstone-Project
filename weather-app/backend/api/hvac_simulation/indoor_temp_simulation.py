@@ -415,10 +415,14 @@ def run_hvac_ai(username: str, target_temp_c: float = None) -> dict:
     }
 
 
-def run_simulation_step_with_hvac(username: str, target_temp_c: float = 22.0) -> dict:
+def run_simulation_step_with_hvac(username: str, target_temp_c: float = None) -> dict:
     """
     Run one simulation step with HVAC AI control.
     This is the enhanced version that uses the physics-based model.
+    
+    Args:
+        username: User's username
+        target_temp_c: Target temperature (None = use saved setpoint or derive from personal_comfort)
     """
     # Get user state
     state = get_user_state(username)
@@ -435,6 +439,19 @@ def run_simulation_step_with_hvac(username: str, target_temp_c: float = 22.0) ->
         return {"error": "House data missing"}
     
     house_data = house.get("data", house) if isinstance(house, dict) else house
+    
+    # Determine target temperature from saved setpoint or personal comfort
+    if target_temp_c is None:
+        saved_setpoint = state.get("target_setpoint")
+        if saved_setpoint is not None:
+            target_temp_c = saved_setpoint
+        else:
+            # Derive from personal comfort (comfort 1=18°C, 10=26°C)
+            personal_comfort = int(house_data.get("personal_comfort", 5))
+            target_temp_c = 18 + (personal_comfort - 1) * (26 - 18) / 9
+            target_temp_c = round(target_temp_c, 1)
+            # Save the derived value
+            set_target_setpoint(user_id, target_temp_c)
     
     # Validate weather data
     raw_weather = state.get("weather")
@@ -472,15 +489,29 @@ def run_simulation_step_with_hvac(username: str, target_temp_c: float = 22.0) ->
     
     # Get HVAC schedule (or generate if needed)
     hvac_schedule = state.get("hvac_sim")
-    current_mode = "off"
+    scheduled_mode = "off"
     
     if hvac_schedule:
         current_hour = datetime.now().hour
         actions = hvac_schedule.get("actions", [])
         for action in actions:
             if action.get("hour") == current_hour:
-                current_mode = action.get("mode", "off")
+                scheduled_mode = action.get("mode", "off")
                 break
+    
+    # Smart real-time mode override - don't run HVAC if already at/past target
+    # This prevents overshooting between schedule updates
+    current_mode = scheduled_mode
+    deadband = 0.3  # Small tolerance
+    
+    if scheduled_mode in ["heat", "pre-heat"]:
+        # If we're already at or above target, don't heat
+        if float(indoor_temp) >= target_temp_c - deadband:
+            current_mode = "off"
+    elif scheduled_mode in ["cool", "pre-cool"]:
+        # If we're already at or below target, don't cool
+        if float(indoor_temp) <= target_temp_c + deadband:
+            current_mode = "off"
     
     # Build property objects
     house_props = HouseProperties.from_house_data(house_data)
@@ -501,7 +532,7 @@ def run_simulation_step_with_hvac(username: str, target_temp_c: float = 22.0) ->
     # Save new temperature
     update_simulated_temp(user_id, new_temp)
     
-    # Determine HVAC status for UI
+    # Determine HVAC status for UI (use actual running mode, not scheduled)
     if current_mode in ["heat", "pre-heat"]:
         hvac_status = "heating"
     elif current_mode in ["cool", "pre-cool"]:
