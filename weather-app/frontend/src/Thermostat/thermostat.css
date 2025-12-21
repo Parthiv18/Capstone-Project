@@ -76,18 +76,38 @@
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; transform: translateY(0); }
-  50% { opacity: 0.6; }
+  0%,
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 0.6;
+  }
 }
 
 @keyframes pulse-up {
-  0%, 100% { opacity: 1; transform: translateY(0); }
-  50% { opacity: 0.6; transform: translateY(-3px); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 0.6;
+    transform: translateY(-3px);
+  }
 }
 
 @keyframes pulse-down {
-  0%, 100% { opacity: 1; transform: translateY(0); }
-  50% { opacity: 0.6; transform: translateY(3px); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 0.6;
+    transform: translateY(3px);
+  }
 }
 
 .th-trend-indicator.rising {
@@ -291,8 +311,13 @@
 }
 
 @keyframes pulse-glow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
 }
 
 .th-notification-time {

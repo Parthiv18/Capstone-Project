@@ -65,21 +65,21 @@ export default function Thermostat({ username }) {
 
     try {
       const data = await Backend.getSimulation(username);
-      
+
       // Track previous temp for trend detection
       if (typeof insideTemp === "number") {
         setPrevInsideTemp(insideTemp);
       }
-      
+
       setInsideTemp(data.T_in_new);
       setOutsideTemp(data.T_out);
       setHvacStatus(data.hvac_mode || "off");
       setHvacPower(data.hvac_power_kw || 0);
       setHvacReason(data.reason || "");
       setError(null);
-      
+
       // Track temperature history for trend (keep last 12 readings = 1 minute)
-      setTempHistory(prev => {
+      setTempHistory((prev) => {
         const newHistory = [...prev, { temp: data.T_in_new, time: Date.now() }];
         return newHistory.slice(-12);
       });
@@ -207,22 +207,23 @@ export default function Thermostat({ username }) {
   // Calculate temperature trend from history
   const tempTrend = useMemo(() => {
     if (tempHistory.length < 2) return { direction: "stable", rate: 0 };
-    
+
     const recent = tempHistory.slice(-6); // Last 30 seconds
     if (recent.length < 2) return { direction: "stable", rate: 0 };
-    
+
     const firstTemp = recent[0].temp;
     const lastTemp = recent[recent.length - 1].temp;
     const change = lastTemp - firstTemp;
-    const timeSpanMinutes = (recent[recent.length - 1].time - recent[0].time) / 60000;
-    
+    const timeSpanMinutes =
+      (recent[recent.length - 1].time - recent[0].time) / 60000;
+
     // Rate per minute
     const rate = timeSpanMinutes > 0 ? change / timeSpanMinutes : 0;
-    
+
     if (Math.abs(change) < 0.05) return { direction: "stable", rate: 0 };
-    return { 
-      direction: change > 0 ? "rising" : "falling", 
-      rate: Math.abs(rate).toFixed(2)
+    return {
+      direction: change > 0 ? "rising" : "falling",
+      rate: Math.abs(rate).toFixed(2),
     };
   }, [tempHistory]);
 
@@ -251,19 +252,26 @@ export default function Thermostat({ username }) {
 
     const tempDiff = targetTemp - currentTemp;
     const tempDiffAbs = Math.abs(tempDiff);
-    
+
     // Get trend arrow
-    const trendArrow = tempTrend.direction === "rising" ? "↑" : 
-                       tempTrend.direction === "falling" ? "↓" : "→";
-    const trendText = tempTrend.direction !== "stable" 
-      ? `${trendArrow} ${tempTrend.rate}°C/min` 
-      : "→ Stable";
+    const trendArrow =
+      tempTrend.direction === "rising"
+        ? "↑"
+        : tempTrend.direction === "falling"
+        ? "↓"
+        : "→";
+    const trendText =
+      tempTrend.direction !== "stable"
+        ? `${trendArrow} ${tempTrend.rate}°C/min`
+        : "→ Stable";
 
     if (hvacStatus === "heating") {
       if (tempDiffAbs > 2) {
         return {
           text: `${statusConfig.icon} Heating to ${targetTemp}°C`,
-          subtext: `${hvacPower > 0 ? `Using ${hvacPower.toFixed(1)} kW` : "Warming up"} • ${trendText}`,
+          subtext: `${
+            hvacPower > 0 ? `Using ${hvacPower.toFixed(1)} kW` : "Warming up"
+          } • ${trendText}`,
           trend: tempTrend.direction,
         };
       } else if (tempDiffAbs > 0.5) {
@@ -285,7 +293,9 @@ export default function Thermostat({ username }) {
       if (tempDiffAbs > 2) {
         return {
           text: `${statusConfig.icon} Cooling to ${targetTemp}°C`,
-          subtext: `${hvacPower > 0 ? `Using ${hvacPower.toFixed(1)} kW` : "Cooling down"} • ${trendText}`,
+          subtext: `${
+            hvacPower > 0 ? `Using ${hvacPower.toFixed(1)} kW` : "Cooling down"
+          } • ${trendText}`,
           trend: tempTrend.direction,
         };
       } else if (tempDiffAbs > 0.5) {
@@ -368,17 +378,28 @@ export default function Thermostat({ username }) {
         <div className="th-section">
           <div className="th-label">Inside</div>
           <div className="th-temp-container">
-            <div className={`th-temp ${getDetailedStatus.trend === "rising" ? "temp-rising" : getDetailedStatus.trend === "falling" ? "temp-falling" : ""}`}>
+            <div
+              className={`th-temp ${
+                getDetailedStatus.trend === "rising"
+                  ? "temp-rising"
+                  : getDetailedStatus.trend === "falling"
+                  ? "temp-falling"
+                  : ""
+              }`}
+            >
               {typeof insideTemp === "number"
                 ? insideTemp.toFixed(1)
                 : insideTemp}
               °C
             </div>
-            {getDetailedStatus.trend && getDetailedStatus.trend !== "stable" && (
-              <span className={`th-trend-indicator ${getDetailedStatus.trend}`}>
-                {getDetailedStatus.trend === "rising" ? "▲" : "▼"}
-              </span>
-            )}
+            {getDetailedStatus.trend &&
+              getDetailedStatus.trend !== "stable" && (
+                <span
+                  className={`th-trend-indicator ${getDetailedStatus.trend}`}
+                >
+                  {getDetailedStatus.trend === "rising" ? "▲" : "▼"}
+                </span>
+              )}
           </div>
           <div className="th-status-text" style={{ color: statusConfig.color }}>
             {getDetailedStatus.text}
@@ -461,7 +482,9 @@ export default function Thermostat({ username }) {
             {notifications.map((notif, index) => (
               <div
                 key={index}
-                className={`th-notification ${notif.hours_away === 0 ? 'th-notification-now' : ''}`}
+                className={`th-notification ${
+                  notif.hours_away === 0 ? "th-notification-now" : ""
+                }`}
                 style={{
                   borderLeftColor: MODE_COLORS[notif.mode] || "#9e9e9e",
                 }}
@@ -476,7 +499,10 @@ export default function Thermostat({ username }) {
                     {notif.mode.toUpperCase()}
                   </span>
                   <span className="th-notification-time-label">
-                    {notif.time_label || (notif.hours_away === 0 ? 'Now' : `In ${notif.hours_away}h`)}
+                    {notif.time_label ||
+                      (notif.hours_away === 0
+                        ? "Now"
+                        : `In ${notif.hours_away}h`)}
                   </span>
                   <span className="th-notification-time">
                     {notif.start_time} - {notif.end_time}
