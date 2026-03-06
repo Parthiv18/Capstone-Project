@@ -3,8 +3,10 @@ import { Backend } from "../App";
 import "./thermostat.css";
 
 // Constants
-const POLL_INTERVAL_MS = 5000;
-const SCHEDULE_REFRESH_MS = 60000; // Refresh schedule every minute
+const POLL_INTERVAL_MS = 30000; // Poll every 30 seconds (reduced from 5s)
+const SCHEDULE_REFRESH_MS = 300000; // Refresh HVAC schedule every 5 min (reduced API calls)
+const MAX_ERROR_STREAK = 3; // Skip Genai calls after 3 consecutive failures
+const ERROR_BACKOFF_MS = 60000; // Wait 1 minute before retrying after error
 
 const HVAC_STATUS_CONFIG = {
   heating: { color: "#ff6b35", icon: "🔥" },
@@ -36,6 +38,11 @@ export default function Thermostat({ username }) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [tempHistory, setTempHistory] = useState([]); // Track recent temps for trend
 
+  // Error tracking for retry logic
+  const [scheduleErrorStreak, setScheduleErrorStreak] = useState(0);
+  const [lastScheduleErrorTime, setLastScheduleErrorTime] = useState(0);
+  const [shouldSkipScheduleFetch, setShouldSkipScheduleFetch] = useState(false);
+
   // Fetch saved setpoint from database on initial load
   const fetchSavedSetpoint = useCallback(async () => {
     if (!username) return;
@@ -45,7 +52,7 @@ export default function Thermostat({ username }) {
       if (data.target_temp_c && !initialLoadDone) {
         setSetTemp(Math.round(data.target_temp_c));
         console.log(
-          `Loaded setpoint from ${data.source}: ${data.target_temp_c}°C`
+          `Loaded setpoint from ${data.source}: ${data.target_temp_c}°C`,
         );
       }
     } catch (err) {
@@ -106,6 +113,19 @@ export default function Thermostat({ username }) {
     async (explicitTemp = null) => {
       if (!username) return;
 
+      // Check if we should skip due to recent errors
+      if (shouldSkipScheduleFetch) {
+        const timeSinceError = Date.now() - lastScheduleErrorTime;
+        if (timeSinceError < ERROR_BACKOFF_MS) {
+          // Still in backoff period - skip this call
+          return;
+        } else {
+          // Backoff period expired, allow retry
+          setShouldSkipScheduleFetch(false);
+          setScheduleErrorStreak(0);
+        }
+      }
+
       try {
         setIsLoading(true);
         // Only pass temp if explicitly provided (user changed it)
@@ -124,14 +144,39 @@ export default function Thermostat({ username }) {
         }
 
         setError(null);
+        // Reset error streak on success
+        setScheduleErrorStreak(0);
       } catch (err) {
-        console.error("Error fetching HVAC schedule:", err);
-        // Don't show error for schedule - it might not be available yet
+        // Increment error streak
+        const newStreak = scheduleErrorStreak + 1;
+        setScheduleErrorStreak(newStreak);
+
+        // Only log error when error streak resets (every MAX_ERROR_STREAK attempts)
+        if (newStreak % MAX_ERROR_STREAK === 0) {
+          console.error(
+            `HVAC Schedule Error (attempt ${newStreak}):`,
+            err.message,
+          );
+        }
+
+        // Activate backoff after MAX_ERROR_STREAK consecutive failures
+        if (newStreak >= MAX_ERROR_STREAK) {
+          setShouldSkipScheduleFetch(true);
+          setLastScheduleErrorTime(Date.now());
+          console.warn(
+            `HVAC API quota exceeded or unavailable. Pausing requests for ${ERROR_BACKOFF_MS / 1000}s`,
+          );
+        }
       } finally {
         setIsLoading(false);
       }
     },
-    [username]
+    [
+      username,
+      shouldSkipScheduleFetch,
+      lastScheduleErrorTime,
+      scheduleErrorStreak,
+    ],
   );
 
   // Poll simulation data
@@ -157,7 +202,7 @@ export default function Thermostat({ username }) {
   useEffect(() => {
     const interval = setInterval(
       () => fetchHVACSchedule(null),
-      SCHEDULE_REFRESH_MS
+      SCHEDULE_REFRESH_MS,
     );
     return () => clearInterval(interval);
   }, [fetchHVACSchedule]);
@@ -174,6 +219,19 @@ export default function Thermostat({ username }) {
   const handleTempChange = useCallback(
     async (newTemp) => {
       setSetTemp(newTemp);
+
+      // Skip refresh if in error backoff period
+      if (shouldSkipScheduleFetch) {
+        const timeSinceError = Date.now() - lastScheduleErrorTime;
+        if (timeSinceError < ERROR_BACKOFF_MS) {
+          console.warn("API temporarily unavailable. Using cached schedule.");
+          return;
+        } else {
+          setShouldSkipScheduleFetch(false);
+          setScheduleErrorStreak(0);
+        }
+      }
+
       // Debounced refresh after temp change - explicitly pass new temp to save it
       setTimeout(async () => {
         try {
@@ -184,12 +242,24 @@ export default function Thermostat({ username }) {
           if (data.summary) {
             setSummary(data.summary);
           }
+          setScheduleErrorStreak(0); // Reset on success
         } catch (err) {
-          console.error("Error refreshing schedule:", err);
+          console.error("Error refreshing schedule:", err.message);
+          const newStreak = scheduleErrorStreak + 1;
+          setScheduleErrorStreak(newStreak);
+          if (newStreak >= MAX_ERROR_STREAK) {
+            setShouldSkipScheduleFetch(true);
+            setLastScheduleErrorTime(Date.now());
+          }
         }
       }, 500);
     },
-    [username]
+    [
+      username,
+      shouldSkipScheduleFetch,
+      lastScheduleErrorTime,
+      scheduleErrorStreak,
+    ],
   );
 
   // Memoized date/time values - updates every second now
@@ -230,11 +300,11 @@ export default function Thermostat({ username }) {
   // Temperature adjustment handlers
   const decreaseTemp = useCallback(
     () => setTemp !== null && handleTempChange(setTemp - 1),
-    [setTemp, handleTempChange]
+    [setTemp, handleTempChange],
   );
   const increaseTemp = useCallback(
     () => setTemp !== null && handleTempChange(setTemp + 1),
-    [setTemp, handleTempChange]
+    [setTemp, handleTempChange],
   );
 
   // Get status display config
@@ -258,8 +328,8 @@ export default function Thermostat({ username }) {
       tempTrend.direction === "rising"
         ? "↑"
         : tempTrend.direction === "falling"
-        ? "↓"
-        : "→";
+          ? "↓"
+          : "→";
     const trendText =
       tempTrend.direction !== "stable"
         ? `${trendArrow} ${tempTrend.rate}°C/min`
@@ -383,8 +453,8 @@ export default function Thermostat({ username }) {
                 getDetailedStatus.trend === "rising"
                   ? "temp-rising"
                   : getDetailedStatus.trend === "falling"
-                  ? "temp-falling"
-                  : ""
+                    ? "temp-falling"
+                    : ""
               }`}
             >
               {typeof insideTemp === "number"
