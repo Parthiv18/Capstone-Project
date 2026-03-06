@@ -33,7 +33,7 @@ from api.hvac_simulation.indoor_temp_simulation import (
 
 load_dotenv()
 
-ALLOWED_ORIGINS = ["http://localhost:5173"]
+ALLOWED_ORIGINS = ["http://localhost:3000", "http://localhost:5173", "http://frontend:3000"]
 
 # ============================================================
 # App Setup
