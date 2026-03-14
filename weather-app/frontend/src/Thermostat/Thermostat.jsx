@@ -37,6 +37,7 @@ export default function Thermostat({ username }) {
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [tempHistory, setTempHistory] = useState([]); // Track recent temps for trend
+  const [aiSetpoint, setAiSetpoint] = useState(null); // AI setpoint metadata
 
   // Error tracking for retry logic
   const [scheduleErrorStreak, setScheduleErrorStreak] = useState(0);
@@ -102,6 +103,10 @@ export default function Thermostat({ username }) {
           setSetTemp(Math.round(data.summary.target_temp_c));
         }
       }
+      // Capture AI setpoint metadata from simulation step response
+      if (data.ai_setpoint) {
+        setAiSetpoint(data.ai_setpoint);
+      }
     } catch (err) {
       console.error("Error fetching simulation data:", err);
       setError("Unable to fetch temperature data");
@@ -141,6 +146,11 @@ export default function Thermostat({ username }) {
           if (explicitTemp === null && data.summary.target_temp_c) {
             setSetTemp(Math.round(data.summary.target_temp_c));
           }
+        }
+
+        // Capture AI setpoint from schedule response too
+        if (data.ai_setpoint) {
+          setAiSetpoint(data.ai_setpoint);
         }
 
         setError(null);
@@ -278,7 +288,13 @@ export default function Thermostat({ username }) {
   const tempTrend = useMemo(() => {
     if (tempHistory.length < 2) return { direction: "stable", rate: 0 };
 
-    const recent = tempHistory.slice(-6); // Last 30 seconds
+    // Use the full history window (up to 12 readings = 6 min at 30s poll)
+    // for a stable signal.  Short windows show noise; longer shows real trend.
+    const recent =
+      tempHistory.length >= 6
+        ? tempHistory.slice(-12) // last 6 min
+        : tempHistory;
+
     if (recent.length < 2) return { direction: "stable", rate: 0 };
 
     const firstTemp = recent[0].temp;
@@ -287,13 +303,14 @@ export default function Thermostat({ username }) {
     const timeSpanMinutes =
       (recent[recent.length - 1].time - recent[0].time) / 60000;
 
-    // Rate per minute
     const rate = timeSpanMinutes > 0 ? change / timeSpanMinutes : 0;
 
-    if (Math.abs(change) < 0.05) return { direction: "stable", rate: 0 };
+    // Threshold: 0.01°C over the window is enough to call it moving.
+    // (RC physics at 30s poll gives ~0.013°C/poll = 0.078°C over 6 readings)
+    if (Math.abs(change) < 0.01) return { direction: "stable", rate: 0 };
     return {
       direction: change > 0 ? "rising" : "falling",
-      rate: Math.abs(rate).toFixed(2),
+      rate: Math.abs(rate).toFixed(3),
     };
   }, [tempHistory]);
 
@@ -323,16 +340,17 @@ export default function Thermostat({ username }) {
     const tempDiff = targetTemp - currentTemp;
     const tempDiffAbs = Math.abs(tempDiff);
 
-    // Get trend arrow
+    // Trend label — RC physics moves slowly so show °C/hr for readability
     const trendArrow =
       tempTrend.direction === "rising"
         ? "↑"
         : tempTrend.direction === "falling"
           ? "↓"
           : "→";
+    const ratePerHr = (parseFloat(tempTrend.rate) * 60).toFixed(1);
     const trendText =
       tempTrend.direction !== "stable"
-        ? `${trendArrow} ${tempTrend.rate}°C/min`
+        ? `${trendArrow} ${ratePerHr}°C/hr`
         : "→ Stable";
 
     if (hvacStatus === "heating") {
@@ -435,6 +453,86 @@ export default function Thermostat({ username }) {
     tempTrend,
   ]);
 
+  // ── AI setpoint label shown below the schedule list ──────────────────────
+  // Always rendered when we have any data — shows active AI target when AI
+  // mode is on, or a "Smart suggestion" from the physics optimiser otherwise.
+  // Now includes comfort band data and drift calculation.
+  const aiSetpointLabel = useMemo(() => {
+    if (!aiSetpoint) return null;
+
+    // Manual override trumps everything
+    if (aiSetpoint.manual_override) {
+      const until = aiSetpoint.manual_override_until
+        ? new Date(aiSetpoint.manual_override_until).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null;
+      return {
+        icon: "✋",
+        text: `Manual override: ${aiSetpoint.manual_override_c}°C${until ? ` until ${until}` : ""}`,
+        subtext: "AI resumes after override expires",
+        comfortCenter: null,
+        comfortBand: null,
+        drift: null,
+      };
+    }
+
+    // AI mode fully active
+    if (aiSetpoint.enabled && aiSetpoint.setpoint_c != null) {
+      const src = aiSetpoint.source === "genai" ? "AI" : "Smart";
+      const pre = aiSetpoint.pre_conditioning;
+      const comfortCenter = aiSetpoint.comfort_center_c;
+      const comfortTolerance = aiSetpoint.comfort_tolerance_c;
+      const bandMin = aiSetpoint.comfort_band_min_c;
+      const bandMax = aiSetpoint.comfort_band_max_c;
+      const drift = aiSetpoint.drift_from_comfort_c;
+      const driftReason = aiSetpoint.drift_reason;
+
+      const driftText = drift
+        ? ` (drift: ${drift > 0 ? "+" : ""}${drift}°C)`
+        : "";
+
+      return {
+        icon: pre ? "⚡" : "🧠",
+        text: `${src} target: ${aiSetpoint.setpoint_c}°C${driftText}${pre ? " · pre-conditioning" : ""}`,
+        subtext: aiSetpoint.strategy || null,
+        comfortCenter,
+        comfortBand: bandMin && bandMax ? [bandMin, bandMax] : null,
+        drift,
+        driftReason,
+      };
+    }
+
+    // Manual mode — show physics suggestion with comfort context
+    if (aiSetpoint.suggested_setpoint_c != null) {
+      const sp = aiSetpoint.suggested_setpoint_c;
+      const pre = aiSetpoint.suggested_pre_conditioning;
+      const comfortCenter = aiSetpoint.comfort_center_c;
+      const comfortTolerance = aiSetpoint.comfort_tolerance_c;
+      const bandMin = aiSetpoint.comfort_band_min_c;
+      const bandMax = aiSetpoint.comfort_band_max_c;
+      const drift = aiSetpoint.drift_from_comfort_c;
+      const driftReason = aiSetpoint.drift_reason;
+
+      const driftText = drift
+        ? ` (drift: ${drift > 0 ? "+" : ""}${drift}°C from your ${comfortCenter}°C comfort)`
+        : "";
+
+      return {
+        icon: pre ? "⚡" : "🧠",
+        text: `Smart suggestion: ${sp}°C${driftText}${pre ? " · pre-condition now" : ""}`,
+        subtext: aiSetpoint.suggested_strategy || null,
+        comfortCenter,
+        comfortBand: bandMin && bandMax ? [bandMin, bandMax] : null,
+        drift,
+        driftReason,
+      };
+    }
+
+    return null;
+  }, [aiSetpoint]);
+
   return (
     <div className="th-container">
       {/* Header */}
@@ -536,49 +634,68 @@ export default function Thermostat({ username }) {
 
         {notifications.length > 0 ? (
           <div className="th-notifications-list">
-            {notifications.map((notif, index) => (
-              <div
-                key={index}
-                className={`th-notification ${
-                  notif.hours_away === 0 ? "th-notification-now" : ""
-                }`}
-                style={{
-                  borderLeftColor: MODE_COLORS[notif.mode] || "#9e9e9e",
-                }}
-              >
-                <div className="th-notification-header">
-                  <span
-                    className="th-notification-mode"
-                    style={{
-                      backgroundColor: MODE_COLORS[notif.mode] || "#9e9e9e",
-                    }}
-                  >
-                    {notif.mode.toUpperCase()}
-                  </span>
-                  <span className="th-notification-time-label">
-                    {notif.time_label ||
-                      (notif.hours_away === 0
-                        ? "Now"
-                        : `In ${notif.hours_away}h`)}
-                  </span>
-                  <span className="th-notification-time">
-                    {notif.start_time} - {notif.end_time}
-                  </span>
+            {notifications.map((notif, index) => {
+              // ── Active-window detection ──────────────────────────────────
+              // Backend sends is_active:true + minutes_away:0 for the running
+              // window. Fall back to the old hours_away===0 shape just in case.
+              const isNow =
+                notif.is_active === true || notif.minutes_away === 0;
+              const timeLabel =
+                notif.time_label || (isNow ? "Now" : `In ${notif.hours_away}h`);
+
+              // Parse "X min left" from the backend message string
+              const minsLeftMatch =
+                isNow && notif.message
+                  ? notif.message.match(/(\d+) min left/)
+                  : null;
+
+              return (
+                <div
+                  key={index}
+                  className={`th-notification ${isNow ? "th-notification-now" : ""}`}
+                  style={{
+                    borderLeftColor: MODE_COLORS[notif.mode] || "#9e9e9e",
+                  }}
+                >
+                  <div className="th-notification-header">
+                    <span
+                      className="th-notification-mode"
+                      style={{
+                        backgroundColor: MODE_COLORS[notif.mode] || "#9e9e9e",
+                      }}
+                    >
+                      {notif.mode.toUpperCase()}
+                    </span>
+                    <span className="th-notification-time-label">
+                      {timeLabel}
+                    </span>
+                    <span className="th-notification-time">
+                      {notif.start_time} - {notif.end_time}
+                    </span>
+                  </div>
+
+                  <div className="th-notification-details">
+                    <span className="th-notification-power">
+                      ⚡ {notif.power_kw} kW
+                    </span>
+                    <span className="th-notification-cost">
+                      💰 $
+                      {typeof notif.cost === "number"
+                        ? notif.cost.toFixed(2)
+                        : notif.cost}
+                    </span>
+                    {/* "X min left" badge — only on the active window */}
+                    {minsLeftMatch && (
+                      <span className="th-notification-timeleft">
+                        {minsLeftMatch[1]} min left
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="th-notification-reason">{notif.reason}</div>
                 </div>
-                <div className="th-notification-details">
-                  <span className="th-notification-power">
-                    ⚡ {notif.power_kw} kW
-                  </span>
-                  <span className="th-notification-cost">
-                    💰 $
-                    {typeof notif.cost === "number"
-                      ? notif.cost.toFixed(2)
-                      : notif.cost}
-                  </span>
-                </div>
-                <div className="th-notification-reason">{notif.reason}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="th-notifications-empty">
@@ -593,6 +710,92 @@ export default function Thermostat({ username }) {
             )}
           </div>
         )}
+
+        {/* AI setpoint row — only shown when AI mode is active */}
+        {aiSetpointLabel && (
+          <div className="th-ai-setpoint-row">
+            <span className="th-ai-setpoint-icon">{aiSetpointLabel.icon}</span>
+            <div className="th-ai-setpoint-body">
+              <span className="th-ai-setpoint-text">
+                {aiSetpointLabel.text}
+              </span>
+              {aiSetpointLabel.subtext && (
+                <span className="th-ai-setpoint-sub">
+                  {aiSetpointLabel.subtext}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Comfort Band Visualization — shows user preference vs AI suggestion */}
+        {aiSetpointLabel &&
+          aiSetpointLabel.comfortBand &&
+          aiSetpointLabel.comfortCenter && (
+            <div className="th-comfort-band">
+              <div className="th-comfort-band-label">
+                Your comfort: {aiSetpointLabel.comfortCenter}°C (±
+                {aiSetpointLabel.comfortCenter && aiSetpointLabel.comfortBand
+                  ? (
+                      aiSetpointLabel.comfortBand[1] -
+                      aiSetpointLabel.comfortCenter
+                    ).toFixed(1)
+                  : "2.0"}
+                °C)
+              </div>
+
+              {/* Visual comfort band bar */}
+              <div className="th-comfort-band-container">
+                <div className="th-comfort-band-bg">
+                  <div
+                    className="th-comfort-band-bar"
+                    style={{
+                      left: `${((aiSetpointLabel.comfortBand[0] - 10) / 20) * 100}%`,
+                      right: `${100 - ((aiSetpointLabel.comfortBand[1] - 10) / 20) * 100}%`,
+                    }}
+                  ></div>
+
+                  {/* AI suggestion marker */}
+                  {aiSetpointLabel.drift !== null && (
+                    <div
+                      className="th-comfort-band-marker"
+                      style={{
+                        left: `${((aiSetpointLabel.comfortCenter + aiSetpointLabel.drift - 10) / 20) * 100}%`,
+                        backgroundColor:
+                          Math.abs(aiSetpointLabel.drift) <=
+                          aiSetpointLabel.comfortBand[1] -
+                            aiSetpointLabel.comfortCenter
+                            ? "#2196F3"
+                            : "#FF9800",
+                      }}
+                    >
+                      <span className="th-comfort-band-marker-label">
+                        AI:{" "}
+                        {(
+                          aiSetpointLabel.comfortCenter + aiSetpointLabel.drift
+                        ).toFixed(1)}
+                        °C
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Scale labels */}
+                <div className="th-comfort-band-scale">
+                  <span className="th-comfort-band-scale-label">10°C</span>
+                  <span className="th-comfort-band-scale-label">20°C</span>
+                  <span className="th-comfort-band-scale-label">30°C</span>
+                </div>
+              </div>
+
+              {/* Drift explanation */}
+              {aiSetpointLabel.driftReason && (
+                <div className="th-comfort-band-reason">
+                  {aiSetpointLabel.driftReason}
+                </div>
+              )}
+            </div>
+          )}
       </div>
 
       {/* AI Status Indicator */}

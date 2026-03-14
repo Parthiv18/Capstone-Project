@@ -1,58 +1,112 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import "./alerts.css";
 
 const API_BASE = "http://localhost:8000/api";
+
+// How many seconds the Refresh button is disabled after a successful call.
+// Mirrors the backend's FORCE_REFRESH_COOLDOWN_MINUTES (5 min = 300 s).
+const REFRESH_COOLDOWN_SECONDS = 300;
 
 export default function Alerts({ username }) {
   const [alertsData, setAlertsData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  // Seconds remaining on the refresh cooldown (0 = button is enabled)
+  const [cooldown, setCooldown] = useState(0);
 
-  // Fetch alerts on mount and when username changes
-  useEffect(() => {
-    if (username) {
-      fetchAlerts();
-    }
-  }, [username]);
+  // Prevents duplicate in-flight requests
+  const isFetchingRef = useRef(false);
+  // Lets us cancel an in-flight fetch when the component unmounts
+  const abortCtrlRef = useRef(null);
+  // Interval handle for the cooldown timer
+  const cooldownTimerRef = useRef(null);
 
-  const fetchAlerts = async (refresh = false) => {
-    if (!username) {
-      setError("Please log in to see appliance alerts");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const endpoint = refresh
-        ? `${API_BASE}/alerts/${username}/refresh`
-        : `${API_BASE}/alerts/${username}`;
-
-      const response = await fetch(endpoint, {
-        method: refresh ? "POST" : "GET",
+  // ── Cooldown ticker ────────────────────────────────────────────────
+  const startCooldown = useCallback(() => {
+    setCooldown(REFRESH_COOLDOWN_SECONDS);
+    clearInterval(cooldownTimerRef.current);
+    cooldownTimerRef.current = setInterval(() => {
+      setCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(cooldownTimerRef.current);
+          return 0;
+        }
+        return prev - 1;
       });
+    }, 1000);
+  }, []);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to fetch alerts");
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      abortCtrlRef.current?.abort();
+      clearInterval(cooldownTimerRef.current);
+    };
+  }, []);
+
+  // ── Core fetch ─────────────────────────────────────────────────────
+  const fetchAlerts = useCallback(
+    async (refresh = false) => {
+      if (!username) {
+        setError("Please log in to see appliance alerts");
+        return;
       }
 
-      const data = await response.json();
-      setAlertsData(data);
-    } catch (err) {
-      console.error("Alerts fetch error:", err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      // Guard: don't fire a second request while one is already running
+      if (isFetchingRef.current) return;
 
-  const handleRefresh = () => {
-    fetchAlerts(true);
-  };
+      // Guard: don't allow manual refresh while cooldown is active
+      if (refresh && cooldown > 0) return;
 
-  // Get alert icon based on type
+      // Cancel any previous in-flight request
+      abortCtrlRef.current?.abort();
+      abortCtrlRef.current = new AbortController();
+
+      isFetchingRef.current = true;
+      setLoading(true);
+      setError(null);
+
+      try {
+        const endpoint = refresh
+          ? `${API_BASE}/alerts/${username}/refresh`
+          : `${API_BASE}/alerts/${username}`;
+
+        const response = await fetch(endpoint, {
+          method: refresh ? "POST" : "GET",
+          signal: abortCtrlRef.current.signal,
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || "Failed to fetch alerts");
+        }
+
+        const data = await response.json();
+        setAlertsData(data);
+
+        // Start cooldown after any successful API round-trip
+        if (refresh) startCooldown();
+      } catch (err) {
+        if (err.name === "AbortError") return; // Silently ignore cancelled requests
+        console.error("Alerts fetch error:", err);
+        setError(err.message);
+      } finally {
+        isFetchingRef.current = false;
+        setLoading(false);
+      }
+    },
+    [username, cooldown, startCooldown],
+  );
+
+  // Fetch on mount / username change (read-only — no cooldown applied)
+  useEffect(() => {
+    if (username) fetchAlerts(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [username]);
+
+  const handleRefresh = () => fetchAlerts(true);
+
+  // ── Alert icon helper ───────────────────────────────────────────────
   const getAlertIcon = (type) => {
     switch (type) {
       case "warning":
@@ -66,7 +120,18 @@ export default function Alerts({ username }) {
     }
   };
 
-  // Render loading state
+  // ── Refresh button label ────────────────────────────────────────────
+  const refreshLabel = () => {
+    if (loading) return "⏳ Loading…";
+    if (cooldown > 0) {
+      const m = Math.floor(cooldown / 60);
+      const s = cooldown % 60;
+      return `⏳ ${m}:${String(s).padStart(2, "0")}`;
+    }
+    return "🔄 Refresh";
+  };
+
+  // ── Render states ───────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="alert-card">
@@ -77,7 +142,7 @@ export default function Alerts({ username }) {
           </div>
         </div>
         <div className="alert-loading">
-          <p>🔄 Analyzing your energy usage...</p>
+          <p>🔄 Analyzing your energy usage…</p>
           <p style={{ fontSize: "12px", marginTop: "8px" }}>
             Our AI is optimizing your appliance schedules
           </p>
@@ -86,7 +151,6 @@ export default function Alerts({ username }) {
     );
   }
 
-  // Render error state
   if (error) {
     return (
       <div className="alert-card">
@@ -106,7 +170,6 @@ export default function Alerts({ username }) {
     );
   }
 
-  // Render no data / no username state
   if (!username) {
     return (
       <div className="alert-card">
@@ -123,7 +186,6 @@ export default function Alerts({ username }) {
     );
   }
 
-  // Render no alerts data yet
   if (!alertsData) {
     return (
       <div className="alert-card">
@@ -146,8 +208,13 @@ export default function Alerts({ username }) {
     );
   }
 
-  const { appliance_schedules, alerts, generated_date, generated_time } =
-    alertsData;
+  const {
+    appliance_schedules,
+    alerts,
+    generated_date,
+    generated_time,
+    _cache_note,
+  } = alertsData;
 
   return (
     <div className="alert-card">
@@ -160,13 +227,23 @@ export default function Alerts({ username }) {
         <button
           className="refresh-btn"
           onClick={handleRefresh}
-          disabled={loading}
+          disabled={loading || cooldown > 0}
+          title={cooldown > 0 ? "Refresh cooldown active" : "Refresh alerts"}
         >
-          🔄 Refresh
+          {refreshLabel()}
         </button>
       </div>
 
-      {/* Daily summary removed per request */}
+      {/* Cooldown / cache note from backend */}
+      {_cache_note && (
+        <div
+          className="alert-item info"
+          style={{ margin: "8px 0", fontSize: "12px" }}
+        >
+          <span className="alert-icon-small">ℹ️</span>
+          <span>{_cache_note}</span>
+        </div>
+      )}
 
       {/* Appliance Schedules */}
       {appliance_schedules && appliance_schedules.length > 0 && (
@@ -188,13 +265,11 @@ export default function Alerts({ username }) {
                 <div className="schedule-time">
                   <span>🕐</span>
                   <span>
-                    {schedule.optimal_start_time} - {schedule.optimal_end_time}
+                    {schedule.optimal_start_time} – {schedule.optimal_end_time}
                   </span>
                   {schedule.time_label && (
                     <span
-                      className={`time-label ${
-                        schedule.time_label === "NOW" ? "now" : ""
-                      }`}
+                      className={`time-label ${schedule.time_label === "NOW" ? "now" : ""}`}
                     >
                       {schedule.time_label}
                     </span>
@@ -220,7 +295,7 @@ export default function Alerts({ username }) {
       {alerts && alerts.length > 0 && (
         <div className="alerts-section">
           <div className="alerts-title">
-            <span>🔔</span> Alerts & Notifications
+            <span>🔔</span> Alerts &amp; Notifications
           </div>
           <div className="alerts-list">
             {alerts.map((alert, index) => (
@@ -235,7 +310,7 @@ export default function Alerts({ username }) {
         </div>
       )}
 
-      {/* No appliances message */}
+      {/* No appliances fallback */}
       {(!appliance_schedules || appliance_schedules.length === 0) &&
         !alerts && (
           <div className="no-appliances">
@@ -247,7 +322,7 @@ export default function Alerts({ username }) {
           </div>
         )}
 
-      {/* Generated timestamp */}
+      {/* Timestamp */}
       {generated_date && (
         <div className="generated-time">
           Last updated: {generated_date} {generated_time}

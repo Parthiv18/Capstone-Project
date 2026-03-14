@@ -1,81 +1,1252 @@
 """
-HVAC AI Controller - GenAI Powered
-Uses Google GenAI to intelligently predict indoor temperatures and 
-generate optimal HVAC schedules based on house properties, weather, and user preferences.
+HVAC AI Controller
+==================
+Two-tier simulation engine:
 
-Provides realistic HVAC simulation with accurate:
-- Power consumption (kW) based on HVAC type and house size
-- Energy usage (kWh) calculations
-- Cost estimates using time-of-use pricing
-- Temperature predictions using thermal physics
+  Tier 1 — GenAI (Google Gemini):
+    If GENAI_KEY is set and the API responds, Gemini generates schedules
+    and interprets conditions in natural language.
+
+  Tier 2 — Pure RC Thermal Physics (capstone-grade fallback):
+    When Gemini is unavailable the system falls through to a full
+    Resistor-Capacitor thermal model identical to the one derived in
+    the ELE 70A capstone report:
+
+      C_home * dT_in/dt = Q_solar + Q_wind + Q_conductive + Q_HVAC
+
+    With proper treatment of:
+      - Rain  → wet-bulb evaporative cooling  (Stull 2011)
+      - Snow  → R-value stacking on roof insulation
+      - Wind  → ACH infiltration heat transfer
+      - Latent load (dehumidification power)
+      - COP degradation curve with outdoor temperature
+      - Ontario Time-of-Use pricing
+      - Predictive heuristic controller (5 modes):
+          Cool / Heat / Pre-Cool / Pre-Heat / Off
+      - Cost-function minimisation over a 24-hour horizon:
+          J = Σ( P_HVAC(t)·Price(t) + λ·|T_in(t) − T_set| )
 """
 
 import os
 import sys
 import json
 import re
+import math
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
+
 from dotenv import load_dotenv
 
-# Add parent paths for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
-import google.generativeai as genai
-
-# ============================================================
-# Configuration
-# ============================================================
+# ── optional GenAI import ────────────────────────────────────────────────────
+try:
+    import google.generativeai as genai
+    _GENAI_AVAILABLE = True
+except ImportError:
+    _GENAI_AVAILABLE = False
 
 load_dotenv()
-GENAI_KEY = os.getenv("GENAI_KEY")
+GENAI_KEY = os.getenv("GENAI_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 
-if GENAI_KEY:
+if _GENAI_AVAILABLE and GENAI_KEY:
     genai.configure(api_key=GENAI_KEY)
 
-# ============================================================
-# Realistic HVAC Constants
-# ============================================================
+# ── Circuit breaker for GenAI quota errors ───────────────────────────────────
+from datetime import timedelta
+_CB_DISABLED_UNTIL: Optional[datetime] = None
+_CB_COOLDOWN_SECONDS = 3600
 
-# Typical HVAC power consumption by type (kW)
-HVAC_POWER_RATINGS = {
-    "central": {"heating": 10.0, "cooling": 3.5},      # Central AC/Furnace
-    "heat_pump": {"heating": 3.0, "cooling": 3.0},     # Heat pump (efficient)
-    "mini_split": {"heating": 1.5, "cooling": 1.2},    # Mini-split per zone
-    "window_ac": {"heating": 1.5, "cooling": 1.0},     # Window unit
-    "none": {"heating": 0, "cooling": 0},
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SECTION 1 — Physical Constants & Building Defaults
+# ════════════════════════════════════════════════════════════════════════════
+
+RHO_AIR   = 1.2
+CP_AIR    = 1005.0
+DT_STEP   = 300.0
+DT_HOUR   = 3600.0
+
+INSULATION_PRESETS: Dict[str, Dict[str, float]] = {
+    "excellent": {"u_value": 0.25, "r_original": 10.0, "ach_base": 0.15},
+    "good":      {"u_value": 0.40, "r_original": 7.0,  "ach_base": 0.30},
+    "average":   {"u_value": 0.60, "r_original": 5.0,  "ach_base": 0.50},
+    "poor":      {"u_value": 1.20, "r_original": 2.5,  "ach_base": 0.90},
 }
 
-# Scaling factor for house size (base is 1500 sqft)
-def get_hvac_capacity(hvac_type: str, house_size_sqft: float, mode: str) -> float:
-    """Get HVAC power capacity in kW based on type and house size."""
-    base_power = HVAC_POWER_RATINGS.get(hvac_type, HVAC_POWER_RATINGS["central"])
-    power = base_power.get(mode, 3.0)
-    # Scale by house size (larger houses need more power)
-    scale = max(0.5, min(2.0, house_size_sqft / 1500))
-    return round(power * scale, 2)
+HVAC_CAPACITY_BASE: Dict[str, Dict[str, float]] = {
+    "central":    {"heating": 10.0, "cooling": 3.5},
+    "heat_pump":  {"heating": 3.5,  "cooling": 3.0},
+    "mini_split": {"heating": 2.0,  "cooling": 1.8},
+    "window_ac":  {"heating": 1.5,  "cooling": 1.2},
+    "none":       {"heating": 0.0,  "cooling": 0.0},
+}
 
-# Time-of-use electricity pricing ($/kWh)
+_TOU_ON_PEAK   = 0.182
+_TOU_MID_PEAK  = 0.122
+_TOU_OFF_PEAK  = 0.087
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SECTION 2 — Utility Functions
+# ════════════════════════════════════════════════════════════════════════════
+
 def get_electricity_price(hour: int) -> float:
-    """Get electricity price based on time of day."""
-    if 22 <= hour or hour < 6:  # Off-peak: 10PM-6AM
-        return 0.08
-    elif 16 <= hour < 21:  # Peak: 4PM-9PM
-        return 0.20
-    else:  # Mid-peak: 6AM-4PM, 9PM-10PM
-        return 0.12
+    h = hour % 24
+    if h in range(7, 11) or h in range(17, 19):
+        return _TOU_ON_PEAK
+    if h in range(11, 17) or h in range(19, 22):
+        return _TOU_MID_PEAK
+    return _TOU_OFF_PEAK
 
-# ============================================================
-# Data Classes
-# ============================================================
+
+def get_24h_prices() -> List[float]:
+    return [get_electricity_price(h) for h in range(24)]
+
+
+def _wet_bulb(t_dry: float, rh: float) -> float:
+    wb = (
+        t_dry * math.atan(0.151977 * (rh + 8.313659) ** 0.5)
+        + math.atan(t_dry + rh)
+        - math.atan(rh - 1.676331)
+        + 0.00391838 * rh ** 1.5 * math.atan(0.023101 * rh)
+        - 4.686035
+    )
+    return min(wb, t_dry)
+
+
+def _house_geometry(house_data: Dict[str, Any]) -> Dict[str, float]:
+    area_m2 = (
+        house_data.get("floor_area_m2")
+        or _sqft_to_m2(house_data.get("home_size") or house_data.get("floor_area_sqft") or 1500)
+    )
+    area_m2 = float(area_m2)
+    ceiling_h = float(house_data.get("ceiling_height_m", 2.7))
+    envelope_m2 = float(house_data.get("wall_area_m2") or area_m2 * 2.2)
+    window_m2   = float(house_data.get("window_area_m2") or area_m2 * 0.15)
+    volume_m3   = area_m2 * ceiling_h
+    return {
+        "floor_area_m2": area_m2,
+        "envelope_m2": envelope_m2,
+        "window_m2": window_m2,
+        "volume_m3": volume_m3,
+        "ceiling_h": ceiling_h,
+    }
+
+
+def _thermal_mass(area_m2: float) -> float:
+    return area_m2 * 300.0 * 1000.0
+
+
+def _insulation_params(house_data: Dict[str, Any]) -> Dict[str, float]:
+    quality = str(house_data.get("insulation_quality", "average")).lower()
+    preset  = INSULATION_PRESETS.get(quality, INSULATION_PRESETS["average"]).copy()
+    for key in ("u_value", "r_original", "ach_base"):
+        if house_data.get(key) is not None:
+            preset[key] = float(house_data[key])
+    return preset
+
+
+def _hvac_capacity(house_data: Dict[str, Any], mode: str) -> float:
+    hvac_type  = str(house_data.get("hvac_type", "central")).lower()
+    caps       = HVAC_CAPACITY_BASE.get(hvac_type, HVAC_CAPACITY_BASE["central"])
+    base_kw    = caps.get(mode, 3.0)
+    area_m2    = _house_geometry(house_data)["floor_area_m2"]
+    scale      = max(0.5, min(2.5, area_m2 / 150.0))
+    return round(base_kw * scale, 2)
+
+
+def _cop(t_out: float, cop_base: float) -> float:
+    degradation = 0.03 * abs(t_out - 20.0)
+    return max(1.0, min(cop_base * 1.2, cop_base - degradation))
+
+
+def _sqft_to_m2(sqft: float) -> float:
+    return float(sqft) * 0.0929
+
+
+def celsius_to_fahrenheit(c: float) -> float:
+    return c * 9 / 5 + 32
+
+
+def fahrenheit_to_celsius(f: float) -> float:
+    return (f - 32) * 5 / 9
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SECTION 3 — RC Thermal Model (pure physics)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _q_conductive(u_eff, envelope_m2, t_boundary, t_in):
+    return u_eff * envelope_m2 * (t_boundary - t_in)
+
+
+def _q_wind(volume_m3, ach_base, k_wind, wind_ms, t_out, t_in):
+    ach = ach_base + k_wind * wind_ms
+    return RHO_AIR * CP_AIR * volume_m3 * (ach / DT_HOUR) * (t_out - t_in)
+
+
+def _q_solar(window_m2, shgc, radiation_wm2, snow_depth_m):
+    eff_radiation = radiation_wm2 * (0.20 if snow_depth_m > 0.05 else 1.0)
+    return window_m2 * shgc * eff_radiation
+
+
+def _q_latent(latent_coeff, humidity_in, humidity_target):
+    return latent_coeff * max(0.0, humidity_in - humidity_target)
+
+
+def _rc_step(t_in, q_total_w, c_home, dt_s):
+    return t_in + (q_total_w * dt_s) / c_home
+
+
+def _parse_weather(weather_data: Dict[str, Any]) -> Dict[str, float]:
+    return {
+        "t_out":      float(weather_data.get("temperature_2m")   or weather_data.get("outdoor_temp") or 15.0),
+        "humidity":   float(weather_data.get("relative_humidity_2m") or weather_data.get("humidity") or 50.0),
+        "wind_ms":    float(weather_data.get("wind_speed_10m")    or weather_data.get("wind_speed") or 0.0),
+        "radiation":  float(weather_data.get("shortwave_radiation") or weather_data.get("solar") or 0.0),
+        "precip":     float(weather_data.get("precipitation", 0)),
+        "snowfall":   float(weather_data.get("snowfall", 0)),
+        "snow_depth": float(weather_data.get("snow_depth", 0)),
+    }
+
+
+def _physics_step(
+    house_data, t_in, t_target, weather_data,
+    hvac_mode_override=None, dt_s=DT_STEP,
+):
+    w   = _parse_weather(weather_data)
+    geo = _house_geometry(house_data)
+    ins = _insulation_params(house_data)
+
+    shgc          = float(house_data.get("shgc", 0.4))
+    k_wind        = float(house_data.get("k_wind", 0.02))
+    latent_coeff  = float(house_data.get("latent_coeff", 150.0))
+    humidity_tgt  = float(house_data.get("humidity_target", 50.0))
+    cop_base      = float(house_data.get("cop_base", 3.5))
+    deadband      = float(house_data.get("deadband_c", 1.0))
+
+    c_home    = _thermal_mass(geo["floor_area_m2"])
+
+    is_raining = w["precip"] > 0.1 and w["snowfall"] < 0.1
+    is_snowing = w["snowfall"] > 0.1
+    wet_bulb   = _wet_bulb(w["t_out"], w["humidity"])
+
+    if is_snowing and w["snow_depth"] > 0:
+        r_snow = min(w["snow_depth"] * 5.0, 10.0)
+        u_eff  = 1.0 / (ins["r_original"] + r_snow)
+    else:
+        u_eff = ins["u_value"]
+
+    t_boundary = wet_bulb if is_raining else w["t_out"]
+
+    q_cond  = _q_conductive(u_eff, geo["envelope_m2"], t_boundary, t_in)
+    q_wind  = _q_wind(geo["volume_m3"], ins["ach_base"], k_wind,
+                      w["wind_ms"], w["t_out"], t_in)
+    q_solar = _q_solar(geo["window_m2"], shgc, w["radiation"], w["snow_depth"])
+
+    mode     = hvac_mode_override
+    q_hvac_w = 0.0
+    power_kw = 0.0
+
+    if mode is None:
+        temp_diff = t_target - t_in
+        if temp_diff > deadband:
+            mode = "heating"
+        elif temp_diff < -deadband:
+            mode = "cooling"
+        else:
+            mode = "off"
+
+    cap_heat_kw = _hvac_capacity(house_data, "heating")
+    cap_cool_kw = _hvac_capacity(house_data, "cooling")
+
+    if mode in ("heat", "heating", "pre-heat", "pre_heat"):
+        power_kw  = cap_heat_kw
+        q_hvac_w  = power_kw * 1000.0 * _cop(w["t_out"], cop_base)
+    elif mode in ("cool", "cooling", "pre-cool", "pre_cool"):
+        power_kw  = cap_cool_kw
+        q_hvac_w  = -power_kw * 1000.0 * _cop(w["t_out"], cop_base)
+
+    q_latent = _q_latent(latent_coeff, w["humidity"], humidity_tgt)
+    if mode in ("cool", "cooling", "pre-cool", "pre_cool") and q_latent > 0:
+        power_kw += q_latent / (1000.0 * _cop(w["t_out"], cop_base))
+
+    q_total  = q_cond + q_wind + q_solar + q_hvac_w
+    t_new    = _rc_step(t_in, q_total, c_home, dt_s)
+    t_new    = max(5.0, min(40.0, t_new))
+
+    hours      = dt_s / DT_HOUR
+    energy_kwh = power_kw * hours
+    rate       = get_electricity_price(datetime.now().hour)
+    cost       = energy_kwh * rate
+
+    return {
+        "new_temp_c":        round(t_new, 2),
+        "hvac_mode":         mode,
+        "hvac_power_kw":     round(power_kw, 3),
+        "hvac_energy_kwh":   round(energy_kwh, 4),
+        "electricity_rate":  rate,
+        "cost_this_step":    round(cost, 4),
+        "should_run_hvac":   mode != "off",
+        "q_conductive_w":    round(q_cond, 1),
+        "q_wind_w":          round(q_wind, 1),
+        "q_solar_w":         round(q_solar, 1),
+        "q_hvac_w":          round(q_hvac_w, 1),
+        "q_total_w":         round(q_total, 1),
+        "reason":            (
+            f"RC model: Δcond={q_cond/1000:.2f} kW, "
+            f"Δwind={q_wind/1000:.2f} kW, "
+            f"Δsolar={q_solar/1000:.2f} kW → "
+            f"{'❄ Cooling' if mode == 'cooling' else '🔥 Heating' if mode == 'heating' else '✓ Standby'}"
+        ),
+        "engine": "physics",
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SECTION 4 — Predictive Heuristic Controller (physics schedule)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _predict_next_temp(house_data, t_in, weather_row, q_hvac_w=0.0):
+    w   = _parse_weather(weather_row)
+    geo = _house_geometry(house_data)
+    ins = _insulation_params(house_data)
+    shgc   = float(house_data.get("shgc", 0.4))
+    k_wind = float(house_data.get("k_wind", 0.02))
+    is_raining  = w["precip"] > 0.1 and w["snowfall"] < 0.1
+    is_snowing  = w["snowfall"] > 0.1
+    wet_bulb    = _wet_bulb(w["t_out"], w["humidity"])
+    t_boundary  = wet_bulb if is_raining else w["t_out"]
+    r_snow = min(w["snow_depth"] * 5.0, 10.0) if is_snowing and w["snow_depth"] > 0 else 0.0
+    u_eff  = (1.0 / (ins["r_original"] + r_snow)) if r_snow > 0 else ins["u_value"]
+    q_cond  = _q_conductive(u_eff, geo["envelope_m2"], t_boundary, t_in)
+    q_wind  = _q_wind(geo["volume_m3"], ins["ach_base"], k_wind, w["wind_ms"], w["t_out"], t_in)
+    q_solar = _q_solar(geo["window_m2"], shgc, w["radiation"], w["snow_depth"])
+    q_total = q_cond + q_wind + q_solar + q_hvac_w
+    c_home  = _thermal_mass(geo["floor_area_m2"])
+    return t_in + (q_total * DT_HOUR) / c_home
+
+
+def _heuristic_mode(
+    house_data, t_in, t_set, deadband,
+    weather_h, weather_h1, weather_h2,
+    price_h, price_h2,
+):
+    cap_w_heat = _hvac_capacity(house_data, "heating") * 1000.0
+    cap_w_cool = _hvac_capacity(house_data, "cooling") * 1000.0
+    cop_base   = float(house_data.get("cop_base", 3.5))
+
+    t_pred_h1  = _predict_next_temp(house_data, t_in,      weather_h,  0.0)
+    t_pred_h2  = _predict_next_temp(house_data, t_pred_h1, weather_h1, 0.0)
+
+    if t_pred_h1 > t_set + deadband:
+        q = max(-cap_w_cool, (_thermal_mass(_house_geometry(house_data)["floor_area_m2"])
+                               * (t_set - t_pred_h1) / DT_HOUR))
+        return "cool", q
+    if t_pred_h1 < t_set - deadband:
+        q = min(cap_w_heat, (_thermal_mass(_house_geometry(house_data)["floor_area_m2"])
+                              * (t_set - t_pred_h1) / DT_HOUR))
+        return "heat", q
+    if t_pred_h2 > t_set + deadband and price_h < price_h2:
+        return "pre-cool", -cap_w_cool * 0.5
+    if t_pred_h2 < t_set - deadband and price_h < price_h2:
+        return "pre-heat", cap_w_heat * 0.5
+    return "off", 0.0
+
+
+def _predict_next_temp_step(house_data, t_in, weather_row, q_hvac_w=0.0, dt_s=DT_STEP):
+    w   = _parse_weather(weather_row)
+    geo = _house_geometry(house_data)
+    ins = _insulation_params(house_data)
+    shgc   = float(house_data.get("shgc", 0.4))
+    k_wind = float(house_data.get("k_wind", 0.02))
+    is_raining = w["precip"] > 0.1 and w["snowfall"] < 0.1
+    is_snowing = w["snowfall"] > 0.1
+    wet_bulb   = _wet_bulb(w["t_out"], w["humidity"])
+    t_boundary = wet_bulb if is_raining else w["t_out"]
+    r_snow = min(w["snow_depth"] * 5.0, 10.0) if is_snowing and w["snow_depth"] > 0 else 0.0
+    u_eff  = (1.0 / (ins["r_original"] + r_snow)) if r_snow > 0 else ins["u_value"]
+    q_cond  = _q_conductive(u_eff, geo["envelope_m2"], t_boundary, t_in)
+    q_wind  = _q_wind(geo["volume_m3"], ins["ach_base"], k_wind, w["wind_ms"], w["t_out"], t_in)
+    q_solar = _q_solar(geo["window_m2"], shgc, w["radiation"], w["snow_depth"])
+    q_total = q_cond + q_wind + q_solar + q_hvac_w
+    c_home  = _thermal_mass(geo["floor_area_m2"])
+    return t_in + (q_total * dt_s) / c_home
+
+
+def _physics_schedule(
+    house_data, weather_rows, t_in_initial, t_set,
+    current_hour, current_minute=0,
+):
+    from datetime import timedelta as _td
+
+    STEP_S        = DT_STEP
+    STEPS_PER_HR  = int(DT_HOUR / STEP_S)
+    TOTAL_STEPS   = 24 * STEPS_PER_HR
+
+    deadband      = float(house_data.get("deadband_c", 1.0))
+    overshoot_db  = deadband * 0.3
+    lam           = float(house_data.get("comfort_weight", 0.5))
+    prices        = get_24h_prices()
+
+    def _step_hour(step):
+        return (current_hour + (current_minute // 60) + (step * 5) // 60) % 24
+
+    def _step_hhmm(step):
+        total_mins = current_minute + step * 5
+        h = (current_hour + total_mins // 60) % 24
+        m = total_mins % 60
+        return f"{h:02d}:{m:02d}"
+
+    def _weather_for_step(step):
+        hour_offset = (current_minute + step * 5) // 60
+        idx = min(hour_offset, len(weather_rows) - 1)
+        return weather_rows[idx]
+
+    def _q_for_mode(mode, t_out):
+        cop_base = float(house_data.get("cop_base", 3.5))
+        if "heat" in mode:
+            kw = _hvac_capacity(house_data, "heating")
+            return kw * 1000.0 * _cop(t_out, cop_base)
+        if "cool" in mode:
+            kw = _hvac_capacity(house_data, "cooling")
+            return -kw * 1000.0 * _cop(t_out, cop_base)
+        return 0.0
+
+    MIN_ON_STEPS  = 6
+    MIN_OFF_STEPS = 4
+
+    t_in              = t_in_initial
+    current_mode      = "off"
+    steps_in_mode     = 0
+    run_cycles: List[Dict] = []
+    active: Optional[Dict] = None
+
+    total_cost   = 0.0
+    total_energy = 0.0
+    J            = 0.0
+
+    for step in range(TOTAL_STEPS):
+        abs_hour  = _step_hour(step)
+        hhmm      = _step_hhmm(step)
+        w_row     = _weather_for_step(step)
+        w         = _parse_weather(w_row)
+
+        hour_offset = (current_minute + step * 5) // 60
+        wh1 = weather_rows[min(hour_offset + 1, len(weather_rows) - 1)]
+        wh2 = weather_rows[min(hour_offset + 2, len(weather_rows) - 1)]
+
+        price_h  = prices[abs_hour]
+        price_h2 = prices[(abs_hour + 2) % 24]
+
+        desired_mode, _ = _heuristic_mode(
+            house_data, t_in, t_set, deadband,
+            w_row, wh1, wh2, price_h, price_h2
+        )
+
+        if "heat" in desired_mode and t_in >= t_set - overshoot_db:
+            desired_mode = "off"
+        if "cool" in desired_mode and t_in <= t_set + overshoot_db:
+            desired_mode = "off"
+
+        if desired_mode != current_mode:
+            if current_mode == "off" and steps_in_mode < MIN_OFF_STEPS:
+                desired_mode = "off"
+            elif current_mode != "off" and steps_in_mode < MIN_ON_STEPS:
+                desired_mode = current_mode
+
+        steps_in_mode += 1
+        if desired_mode != current_mode:
+            steps_in_mode = 0
+            if active is not None:
+                active["end_time"]   = hhmm
+                active["end_temp_c"] = round(t_in, 1)
+                active["duration_minutes"] = (
+                    (int(hhmm.split(":")[0]) * 60 + int(hhmm.split(":")[1]))
+                    - (int(active["start_time"].split(":")[0]) * 60
+                       + int(active["start_time"].split(":")[1]))
+                ) % (24 * 60)
+                run_cycles.append(active)
+                active = None
+
+            if desired_mode != "off":
+                cap_kw = _hvac_capacity(
+                    house_data,
+                    "heating" if "heat" in desired_mode else "cooling"
+                )
+                active = {
+                    "hour":            abs_hour,
+                    "mode":            desired_mode,
+                    "start_time":      hhmm,
+                    "end_time":        None,
+                    "power_kw":        round(cap_kw, 2),
+                    "cost":            0.0,
+                    "energy_kwh":      0.0,
+                    "start_temp_c":    round(t_in, 1),
+                    "end_temp_c":      None,
+                    "predicted_temp_c": round(t_in, 1),
+                    "target_temp_c":   t_set,
+                    "reason":          _mode_reason(desired_mode, t_in, t_set, price_h, w["t_out"]),
+                }
+            else:
+                run_cycles.append({
+                    "hour":            abs_hour,
+                    "mode":            "off",
+                    "start_time":      hhmm,
+                    "end_time":        None,
+                    "power_kw":        0.0,
+                    "cost":            0.0,
+                    "energy_kwh":      0.0,
+                    "predicted_temp_c": round(t_in, 1),
+                    "target_temp_c":   t_set,
+                    "reason":          _mode_reason("off", t_in, t_set, price_h, w["t_out"]),
+                })
+
+            current_mode = desired_mode
+
+        if run_cycles and run_cycles[-1]["mode"] == "off" and run_cycles[-1]["end_time"] is None:
+            run_cycles[-1]["end_time"] = _step_hhmm(step + 1)
+            run_cycles[-1]["predicted_temp_c"] = round(t_in, 1)
+
+        q_hvac = _q_for_mode(desired_mode, w["t_out"])
+        t_new  = _predict_next_temp_step(house_data, t_in, w_row, q_hvac, STEP_S)
+        t_new  = max(5.0, min(40.0, t_new))
+
+        if active is not None:
+            step_energy = active["power_kw"] * (STEP_S / DT_HOUR)
+            step_cost   = step_energy * price_h
+            active["cost"]       += step_cost
+            active["energy_kwh"] += step_energy
+            total_cost   += step_cost
+            total_energy += step_energy
+            active["predicted_temp_c"] = round(t_new, 1)
+
+        J    += (active["power_kw"] if active else 0.0) * price_h + lam * abs(t_in - t_set)
+        t_in  = t_new
+
+    last_hhmm = _step_hhmm(TOTAL_STEPS)
+    if active is not None:
+        active["end_time"]   = last_hhmm
+        active["end_temp_c"] = round(t_in, 1)
+        active["duration_minutes"] = (
+            (int(last_hhmm.split(":")[0]) * 60 + int(last_hhmm.split(":")[1]))
+            - (int(active["start_time"].split(":")[0]) * 60
+               + int(active["start_time"].split(":")[1]))
+        ) % (24 * 60)
+        run_cycles.append(active)
+    if run_cycles and run_cycles[-1]["end_time"] is None:
+        run_cycles[-1]["end_time"] = last_hhmm
+
+    for rc in run_cycles:
+        rc["cost"]       = round(rc.get("cost", 0.0), 4)
+        rc["energy_kwh"] = round(rc.get("energy_kwh", 0.0), 4)
+
+    comfort_violations = sum(
+        1 for rc in run_cycles if rc["mode"] != "off"
+        and abs(rc.get("predicted_temp_c", t_set) - t_set) > deadband * 2
+    )
+    comfort_score = max(0.0, 100.0 - comfort_violations * 4.0)
+
+    return {
+        "actions":          run_cycles,
+        "total_cost":       round(total_cost, 3),
+        "total_energy_kwh": round(total_energy, 2),
+        "comfort_score":    round(comfort_score, 1),
+        "cost_function_J":  round(J, 3),
+        "generated_at":     datetime.now().isoformat(),
+        "engine":           "physics",
+        "strategy_summary": (
+            f"RC exact-time schedule: {sum(1 for r in run_cycles if r['mode']!='off')} run cycles, "
+            f"J={J:.2f}, cost=${total_cost:.3f}, "
+            f"energy={total_energy:.2f} kWh, comfort={comfort_score:.0f}%"
+        ),
+    }
+
+
+def _mode_reason(mode, t_in, t_set, price, t_out):
+    tier = "off-peak" if price <= _TOU_OFF_PEAK else "mid-peak" if price <= _TOU_MID_PEAK else "on-peak"
+    if mode == "heat":
+        return f"Indoor {t_in:.1f}°C below setpoint {t_set:.1f}°C → heating (${price}/kWh {tier})"
+    if mode == "cool":
+        return f"Indoor {t_in:.1f}°C above setpoint {t_set:.1f}°C → cooling (${price}/kWh {tier})"
+    if mode == "pre-heat":
+        return f"Pre-heating now at ${price}/kWh ({tier}) to avoid costlier run later"
+    if mode == "pre-cool":
+        return f"Pre-cooling now at ${price}/kWh ({tier}) to shift load from peak hours"
+    return f"Indoor {t_in:.1f}°C within comfort band — system idle"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SECTION 5 — GenAI Prompts & Caller
+#
+#  *** PROMPTS ENHANCED WITH EMPIRICAL TRAINING DATA (8,760 hourly records,
+#      full calendar year 2016, Ontario residential home) ***
+#
+#  Key patterns extracted from historical dataset:
+#   • Bimodal daily load peaks: 05:00–08:00 (avg 0.40–0.43 kW) and
+#     13:00–16:00 (avg 0.33–0.40 kW) — both are Ontario TOU ON/MID-peak
+#   • Lowest-cost windows: 02:00–04:00 (0.15–0.22 kW) and 10:00–12:00
+#     (0.13–0.14 kW)  ← optimal appliance/pre-conditioning slots
+#   • Furnace/HVAC activates aggressively below −5 °C outdoor (0.26 kW avg)
+#     and above +15 °C for cooling (0.20–0.23 kW avg)
+#   • Winter morning heat-up spike: 04:00–06:00 (0.28–0.41 kW FurnaceHRV)
+#   • Summer cooling peaks: 07:00–08:00 and 14:00–16:00 (0.46–0.50 kW)
+#   • High humidity (>70 %) raises total load ~12 % via latent dehumidification
+#   • Seasonal temperature ranges (°C):
+#       Winter −26.3 → +14.0  (avg −2.0)
+#       Spring −14.7 → +31.8  (avg  +8.5)
+#       Summer  +6.0 → +32.2  (avg +20.7)
+#       Fall    −5.2 → +29.0  (avg +10.7)
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── ★ ENHANCED: Empirical baseline woven into the physics reference ──────────
+_PHYSICS_CONTEXT = """
+## RC Thermal Model Reference (capstone ELE 70A)
+C_home · dT_in/dt = Q_solar + Q_wind + Q_conductive + Q_HVAC
+
+Q_conductive = U_eff × A_home × (T_boundary − T_in)
+  Rain → T_boundary = T_wet_bulb  (Stull 2011)
+  Snow → U_eff = 1/(R_original + R_snow)
+
+Q_wind = ρ·Cp·V·(ACH/3600)·(T_out − T_in)
+  ACH = ACH_base + k_w × wind_speed
+
+Q_solar = A_windows × SHGC × Solar  (80% reduction when snow present)
+
+Cost Function: J = Σ(P_HVAC(t)·Price(t) + λ·|T_in(t) − T_set|)
+
+Ontario TOU: off-peak $0.087, mid-peak $0.122, on-peak $0.182 /kWh
+
+## ★ Empirical Load Baselines (8,760 hrs of real Ontario residential data)
+BIMODAL DAILY ENERGY PEAKS — hardest hours to avoid:
+  Morning surge  05:00–08:00 → 0.40–0.43 kW average total home load
+  Afternoon peak 13:00–16:00 → 0.33–0.40 kW average total home load
+
+LOWEST-DEMAND WINDOWS — best for scheduling & pre-conditioning:
+  Deep-night valley 02:00–04:00 → 0.15–0.22 kW  ← CHEAPEST and quietest
+  Midday lull       10:00–12:00 → 0.13–0.14 kW  ← Second-best window
+
+FURNACE/HVAC ACTIVATION THRESHOLDS (empirically confirmed):
+  T_out < −5 °C  → FurnaceHRV avg 0.20–0.26 kW  (aggressive heating demand)
+  T_out < 0 °C   → FurnaceHRV avg 0.16 kW
+  T_out 5–15 °C  → FurnaceHRV avg 0.09–0.13 kW  (mild — minimal HVAC)
+  T_out 15–25 °C → FurnaceHRV avg 0.19–0.23 kW  (cooling season kicks in)
+  T_out > 25 °C  → FurnaceHRV avg 0.19 kW  (active cooling)
+
+SEASONAL HVAC SPIKES:
+  Winter morning heat-up  04:00–06:00 → 0.28–0.41 kW FurnaceHRV
+  Summer cooling peaks    07:00–08:00 and 14:00–16:00 → 0.46–0.50 kW
+  Summer midnight cooling 22:00–00:00 → 0.41–0.44 kW total load
+
+HUMIDITY EFFECT ON LOAD:
+  RH > 70% → +12% energy vs dry conditions (latent dehumidification load)
+  Summer avg RH = 70.3%, peaks at 98% → always account for latent load in summer
+
+SEASONAL TEMPERATURE RANGES (°C):
+  Winter: −26.3 to +14.0  avg −2.0°C
+  Spring: −14.7 to +31.8  avg +8.5°C
+  Summer:   +6.0 to +32.2  avg +20.7°C
+  Fall:    −5.2 to +29.0  avg +10.7°C
+
+APPLIANCE SCHEDULING INSIGHT:
+  WashingMachine + Dishwasher load is minimised at 02:00–04:00 and 10:00–11:00.
+  Worst time to run heavy appliances: 05:00–08:00 (stacks on morning surge).
+"""
+
+
+def _build_step_prompt(
+    house_data: Dict[str, Any],
+    t_in: float,
+    t_target: float,
+    weather_data: Dict[str, Any],
+    hvac_schedule: Optional[Dict] = None,
+) -> str:
+    # ── ★ ENHANCED: step prompt embeds empirical thresholds so the AI can
+    #    immediately classify the current hour against known load patterns ──
+    w = _parse_weather(weather_data)
+    geo = _house_geometry(house_data)
+    ins = _insulation_params(house_data)
+    h   = datetime.now().hour
+    rate = get_electricity_price(h)
+
+    scheduled_mode = "off"
+    if hvac_schedule and "actions" in hvac_schedule:
+        for a in hvac_schedule["actions"]:
+            if a.get("hour") == h:
+                scheduled_mode = a.get("mode", "off")
+                break
+
+    # Empirical load context for this specific hour
+    empirical_load_map = {
+        range(2, 5):   ("LOWEST-DEMAND deep-night valley", "0.15–0.22 kW",  "ideal pre-conditioning window"),
+        range(5, 9):   ("MORNING SURGE peak",              "0.40–0.43 kW",  "avoid adding HVAC load if possible"),
+        range(10, 12): ("MIDDAY LULL valley",              "0.13–0.14 kW",  "second-best pre-conditioning window"),
+        range(13, 17): ("AFTERNOON PEAK",                  "0.33–0.40 kW",  "coast on thermal mass — minimize runtime"),
+        range(22, 24): ("LATE-NIGHT ramp-down",            "0.33–0.44 kW",  "pre-cool/pre-heat if peak coming"),
+    }
+    hour_context = ("standard off-peak period", "0.20–0.30 kW", "normal operation")
+    for hr_range, ctx in empirical_load_map.items():
+        if h in hr_range:
+            hour_context = ctx
+            break
+    load_label, load_range, load_advice = hour_context
+
+    # Furnace threshold classification
+    if w["t_out"] < -5:
+        hvac_intensity = "AGGRESSIVE heating demand expected (empirical avg 0.20–0.26 kW FurnaceHRV)"
+    elif w["t_out"] < 0:
+        hvac_intensity = "moderate heating demand (empirical avg 0.16 kW FurnaceHRV)"
+    elif w["t_out"] < 5:
+        hvac_intensity = "low heating demand (empirical avg 0.11 kW FurnaceHRV)"
+    elif w["t_out"] < 15:
+        hvac_intensity = "minimal HVAC demand — mild weather (empirical avg 0.09–0.13 kW)"
+    elif w["t_out"] < 20:
+        hvac_intensity = "transitional — light cooling may be needed (empirical avg 0.13–0.20 kW)"
+    else:
+        hvac_intensity = "COOLING season demand expected (empirical avg 0.19–0.23 kW FurnaceHRV)"
+
+    humidity_note = ""
+    if w["humidity"] > 0.70:
+        humidity_note = f"\n- ⚠ High humidity ({w['humidity']:.0%}) → +12% latent load expected (empirical). Prioritise dehumidification."
+
+    return f"""{_PHYSICS_CONTEXT}
+
+## House
+- Floor area: {geo['floor_area_m2']:.0f} m²  Volume: {geo['volume_m3']:.0f} m³
+- Envelope: {geo['envelope_m2']:.0f} m²  Windows: {geo['window_m2']:.0f} m²
+- Insulation: {house_data.get('insulation_quality','average')}  U={ins['u_value']} W/m²K
+- HVAC: {house_data.get('hvac_type','central')}
+- Heating cap: {_hvac_capacity(house_data,'heating')} kW  Cooling cap: {_hvac_capacity(house_data,'cooling')} kW
+
+## Current Conditions ({h:02d}:{datetime.now().minute:02d})
+- T_in={t_in:.1f}°C  T_target={t_target:.1f}°C  T_out={w['t_out']}°C
+- Humidity={w['humidity']:.0%}  Wind={w['wind_ms']} m/s  Solar={w['radiation']} W/m²
+- Precip={w['precip']} mm  Snow={w['snow_depth']} m
+- Scheduled mode: {scheduled_mode}  Rate: ${rate}/kWh{humidity_note}
+
+## ★ Empirical Context for Hour {h:02d}:00
+- This hour is a {load_label} (historical avg {load_range}).
+- Advice: {load_advice}.
+- T_out={w['t_out']:.1f}°C → {hvac_intensity}
+
+## Deadband control
+- Turn on  if |T_in − T_target| > {house_data.get('deadband_c',1.0)}°C
+- Turn off if |T_in − T_target| < 0.3°C (overshoot prevention)
+- Max ΔT in 5 min: ±0.5°C
+- IMPORTANT: Cross-check your mode decision against the empirical HVAC thresholds
+  above. If T_out is in the "minimal HVAC demand" zone AND T_in is within deadband,
+  prefer "off" over running HVAC — historical data confirms low HVAC need at these
+  temperatures.
+
+## Output (JSON only):
+{{
+  "new_temp_c": {round(t_in,1)},
+  "hvac_mode": "off",
+  "hvac_power_kw": 0.0,
+  "hvac_energy_kwh": 0.0,
+  "electricity_rate": {rate},
+  "cost_this_step": 0.0,
+  "should_run_hvac": false,
+  "reason": "explanation referencing empirical load pattern and current conditions"
+}}"""
+
+
+def _build_schedule_prompt(
+    house_data: Dict[str, Any],
+    weather_rows: List[Dict],
+    t_in: float,
+    t_target: float,
+) -> str:
+    # ── ★ ENHANCED: schedule prompt gives the AI the full empirical playbook
+    #    so it can generate a cost-optimal schedule anchored to real patterns ──
+    h   = datetime.now().hour
+    geo = _house_geometry(house_data)
+    ins = _insulation_params(house_data)
+
+    lines = []
+    for i in range(24):
+        hour = (h + i) % 24
+        row  = weather_rows[min(i, len(weather_rows)-1)]
+        w    = _parse_weather(row)
+        p    = get_electricity_price(hour)
+        tier = "OFF" if p <= _TOU_OFF_PEAK else "MID" if p <= _TOU_MID_PEAK else "ON"
+        # ★ Tag each hour with its empirical load label so AI can see at a glance
+        if hour in range(5, 9):
+            emp_tag = "↑SURGE"
+        elif hour in range(13, 17):
+            emp_tag = "↑PEAK"
+        elif hour in range(2, 5) or hour in range(10, 12):
+            emp_tag = "↓VALLEY"
+        else:
+            emp_tag = ""
+        lines.append(
+            f"  {hour:02d}:00  T_out={w['t_out']}°C  solar={w['radiation']}W/m²"
+            f"  ${p} ({tier}) {emp_tag}"
+        )
+
+    cap_h = _hvac_capacity(house_data, "heating")
+    cap_c = _hvac_capacity(house_data, "cooling")
+
+    # Identify the best pre-conditioning windows in the upcoming 24 h
+    upcoming_valleys = [
+        f"{(h+i)%24:02d}:00"
+        for i in range(24)
+        if (h+i)%24 in list(range(2,5)) + list(range(10,12))
+    ][:4]
+
+    # Identify the peaks the schedule must navigate
+    upcoming_peaks = [
+        f"{(h+i)%24:02d}:00–{(h+i+1)%24:02d}:00"
+        for i in range(24)
+        if (h+i)%24 in list(range(5,9)) + list(range(13,17))
+    ][:6]
+
+    return f"""{_PHYSICS_CONTEXT}
+
+## House
+- Area: {geo['floor_area_m2']:.0f} m²  HVAC: {house_data.get('hvac_type','central')}
+- Insulation: {house_data.get('insulation_quality','average')}  U={ins['u_value']}
+- Heating: {cap_h} kW  Cooling: {cap_c} kW
+- T_target={t_target}°C  deadband=±{house_data.get('deadband_c',1.0)}°C
+- Current T_in={t_in}°C
+
+## 24-Hour Forecast starting hour {h:02d} (↑SURGE/↑PEAK = high-load, ↓VALLEY = low-load)
+{chr(10).join(lines)}
+
+## ★ Empirical Scheduling Rules (derived from 8,760 hrs of real data)
+
+### Pre-Conditioning Windows (schedule HVAC start here to front-load cheap energy):
+  Best slots in next 24 h: {', '.join(upcoming_valleys) if upcoming_valleys else 'none in window'}
+  → Use these to build thermal buffer BEFORE the morning surge (05:00–08:00)
+    and afternoon peak (13:00–16:00).
+
+### Peak-Avoidance Windows (HVAC should be OFF or minimal here):
+  High-load peaks: {', '.join(upcoming_peaks) if upcoming_peaks else 'none in window'}
+  → Historical data shows these overlap with Ontario TOU ON/MID-peak pricing.
+    Let thermal mass coast. Only run HVAC if T_in exits the deadband.
+
+### Season-Specific Insights:
+  WINTER (T_out < 5°C):
+    - Heaviest furnace demand at 04:00–06:00 (empirical avg 0.28–0.41 kW).
+    - Pre-heat during 02:00–04:00 off-peak to build thermal buffer.
+    - House typically loses 1–2°C/hr at −10°C outdoor without HVAC.
+  SUMMER (T_out > 18°C):
+    - Peak cooling loads 07:00–08:00 and 14:00–16:00 (0.46–0.50 kW).
+    - High humidity (avg 70%, max 98%) adds +12% latent load.
+    - Pre-cool to T_target−1.5°C before 07:00 and 13:00 to coast peaks.
+  SHOULDER (5°C ≤ T_out ≤ 18°C):
+    - Minimal HVAC needed; empirical avg only 0.09–0.13 kW.
+    - Favour "off" mode; only activate if T_in drifts > deadband.
+
+### Appliance Co-scheduling (embed in recommendations field):
+  WashingMachine & Dishwasher BEST at: 10:00–12:00 or 02:00–04:00
+  AVOID scheduling heavy appliances at: 05:00–08:00 (stacks on morning surge)
+
+## Strategy
+1. Identify pre-conditioning windows using VALLEY tags above.
+2. Schedule HVAC start so T_in reaches T_target by the time peaks begin.
+3. Coast through SURGE/PEAK hours on thermal mass.
+4. IMPORTANT: start_time and end_time must include realistic MINUTES, not just hours.
+   E.g. "04:37" not "04:00". Think about when T_in actually drifts past the
+   deadband (±{house_data.get("deadband_c",1.0)}°C around {t_target}°C) given thermal mass.
+
+## Output (JSON only — run cycles, not fixed hourly slots):
+{{
+  "actions": [
+    {{"hour":{h},"mode":"heat|cool|pre-heat|pre-cool|off",
+      "start_time":"{h:02d}:{datetime.now().minute:02d}",
+      "end_time":"HH:MM",
+      "power_kw":0.0,"cost":0.0,
+      "reason":"reference empirical pattern + why HVAC turns on/off at this exact time",
+      "predicted_temp_c":{t_in},"target_temp_c":{t_target}}}
+  ],
+  "total_cost":0.0,"total_energy_kwh":0.0,
+  "comfort_score":95.0,"strategy_summary":"..."
+}}"""
+
+
+def _call_genai(prompt: str) -> Optional[Dict]:
+    global _CB_DISABLED_UNTIL
+
+    if not (_GENAI_AVAILABLE and GENAI_KEY):
+        return None
+
+    now = datetime.now()
+    if _CB_DISABLED_UNTIL is not None:
+        if now < _CB_DISABLED_UNTIL:
+            return None
+        else:
+            _CB_DISABLED_UNTIL = None
+
+    try:
+        model    = genai.GenerativeModel("gemini-2.5-flash-lite")
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                temperature=0.1,
+                max_output_tokens=4096,
+                response_mime_type="application/json",
+            )
+        )
+        text = response.text.strip()
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        text = re.sub(r'\s*```$', '', text)
+        text = re.sub(r',\s*([}\]])', r'\1', text)
+
+        for attempt in (text, text[text.find('{'):text.rfind('}')+1]):
+            try:
+                return json.loads(attempt)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    except Exception as exc:
+        err_str = str(exc)
+        if "429" in err_str or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str:
+            _CB_DISABLED_UNTIL = datetime.now() + timedelta(seconds=_CB_COOLDOWN_SECONDS)
+            mins = _CB_COOLDOWN_SECONDS // 60
+            print(
+                f"[GenAI] Quota exceeded — circuit breaker tripped. "
+                f"Switching to RC physics engine for {mins} minutes."
+            )
+        else:
+            print(f"[GenAI] {exc}")
+    return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SECTION 5b — AI Setpoint Optimiser
+# ════════════════════════════════════════════════════════════════════════════
+
+_SETPOINT_REFRESH_INTERVAL_S: float = 1800.0
+
+
+def _build_setpoint_prompt(
+    house_data:      Dict[str, Any],
+    t_in:            float,
+    comfort_c:       float,
+    comfort_tol:     float,
+    weather_rows:    List[Dict],
+    current_hour:    int,
+) -> str:
+    # ── ★ ENHANCED: setpoint prompt gives the AI empirical thresholds so it
+    #    can make data-grounded pre-conditioning decisions, not guesses ──────
+    lines = []
+    for i in range(min(24, len(weather_rows))):
+        h   = (current_hour + i) % 24
+        w   = _parse_weather(weather_rows[i])
+        p   = get_electricity_price(h)
+        tier = "OFF" if p <= _TOU_OFF_PEAK else "MID" if p <= _TOU_MID_PEAK else "ON"
+        if h in range(5, 9):
+            emp_tag = "↑MORNING SURGE (0.40–0.43 kW hist.)"
+        elif h in range(13, 17):
+            emp_tag = "↑AFTERNOON PEAK (0.33–0.40 kW hist.)"
+        elif h in range(2, 5):
+            emp_tag = "↓BEST PRE-COND WINDOW (0.15–0.22 kW hist.)"
+        elif h in range(10, 12):
+            emp_tag = "↓MIDDAY VALLEY (0.13–0.14 kW hist.)"
+        else:
+            emp_tag = ""
+        lines.append(
+            f"  {h:02d}:00  T_out={w['t_out']:.1f}°C  solar={w['radiation']:.0f}W/m²"
+            f"  ${p} ({tier})  {emp_tag}"
+        )
+
+    geo  = _house_geometry(house_data)
+    ins  = _insulation_params(house_data)
+    cap_h = _hvac_capacity(house_data, "heating")
+    cap_c = _hvac_capacity(house_data, "cooling")
+    thermal_mass = _thermal_mass(geo["floor_area_m2"])
+
+    thermal_inertia_factor = min(1.0, max(0.2, thermal_mass / 5e6))
+    insulation_factor = min(1.0, max(0.3, 0.5 / ins["u_value"]))
+    drift_capacity = (thermal_inertia_factor + insulation_factor) / 2.0
+    max_safe_drift = comfort_tol * drift_capacity
+
+    # Classify current outdoor temp against empirical thresholds
+    t_out_now = _parse_weather(weather_rows[0])["t_out"] if weather_rows else 15.0
+    if t_out_now < -5:
+        empirical_hvac_demand = "AGGRESSIVE heating (empirical: 0.20–0.26 kW FurnaceHRV). Winter morning 04:00–06:00 is the hardest peak — pre-heat NOW if in that window."
+    elif t_out_now < 5:
+        empirical_hvac_demand = "moderate heating demand (empirical: 0.09–0.16 kW). Pre-heat during 02:00–04:00 valley if upcoming surge detected."
+    elif t_out_now < 15:
+        empirical_hvac_demand = "minimal HVAC demand (empirical: 0.09–0.13 kW). Hold comfort setpoint; no aggressive pre-conditioning needed."
+    elif t_out_now < 22:
+        empirical_hvac_demand = "transitional cooling (empirical: 0.13–0.20 kW). Pre-cool during 10:00–12:00 valley ahead of afternoon peak (14:00–16:00 = 0.46–0.50 kW)."
+    else:
+        empirical_hvac_demand = "ACTIVE cooling season (empirical: 0.19–0.23 kW). High humidity likely (+12% latent load). Pre-cool to T_target−1.5°C during 02:00–04:00 or 10:00–12:00."
+
+    # Humidity alert
+    hum_now = _parse_weather(weather_rows[0]).get("humidity", 50) if weather_rows else 50
+    humidity_advisory = ""
+    if hum_now > 70:
+        humidity_advisory = f"\n⚠ HUMIDITY ALERT: Current RH={hum_now:.0f}% exceeds 70% empirical threshold. Expect +12% latent dehumidification load. Adjust setpoint slightly cooler to reduce latent burden."
+
+    return f"""{_PHYSICS_CONTEXT}
+
+## Task
+Choose a single OPTIMAL thermostat setpoint for RIGHT NOW (hour {current_hour:02d}).
+The controller will chase this setpoint; it will call again in ~30 min for a new value.
+⚠️ YOUR RECOMMENDATIONS MUST BE GROUNDED IN THE EMPIRICAL PATTERNS BELOW.
+
+## Comfort Constraints  ← HARD LIMITS, never violate
+- User comfort centre: {comfort_c:.1f}°C
+- Allowed comfort band: [{comfort_c - comfort_tol:.1f}, {comfort_c + comfort_tol:.1f}] °C
+- Your setpoint MUST stay within this band.
+
+## House Physical Properties
+- Floor area: {geo['floor_area_m2']:.0f} m²
+- Insulation quality: {house_data.get('insulation_quality','average')}  (U-value: {ins['u_value']} W/m²K)
+- Thermal mass: {thermal_mass/1e6:.1f} MJ/°C
+  └─ Higher thermal mass = slower temperature drift = can pre-condition more aggressively
+- HVAC: {house_data.get('hvac_type','central')}  Heat:{cap_h}kW / Cool:{cap_c}kW
+- COP baseline: {house_data.get('cop_base', 3.5)}
+- Safe drift capacity for this house: ±{max_safe_drift:.1f}°C during peak hours
+
+## Current Indoor State
+- T_in now: {t_in:.1f}°C
+- Deadband: ±{house_data.get('deadband_c', 1.0)}°C{humidity_advisory}
+
+## ★ Empirical HVAC Demand at Current Outdoor Temp ({t_out_now:.1f}°C)
+{empirical_hvac_demand}
+
+## 24-Hour Forecast (↑ = high-load peak, ↓ = pre-conditioning opportunity)
+{chr(10).join(lines)}
+
+## ★ Empirical Setpoint Decision Rules (data-grounded):
+
+### Rule 1 — Pre-Conditioning (OFF-PEAK + peak ahead within 2 hrs)
+  WINTER: Raise setpoint to comfort_c + {max_safe_drift:.1f}°C (pre-heat buffer)
+    → Empirical basis: winter morning peak 04:00–06:00 hits 0.28–0.41 kW.
+      Pre-heating at 02:00–04:00 off-peak avoids 30–40% of peak HVAC cost.
+  SUMMER: Lower setpoint to comfort_c − {max_safe_drift:.1f}°C (pre-cool buffer)
+    → Empirical basis: summer cooling peaks 07:00–08:00 (0.46–0.50 kW).
+      Pre-cooling during 10:00–12:00 valley shifts load by ~2–3 hrs.
+
+### Rule 2 — Peak Hours (ON-PEAK, T_in still in comfort band)
+  Let setpoint drift toward the opposite edge of the comfort band.
+  → COOLING season: allow up to comfort_c + {max_safe_drift:.1f}°C (drift warm)
+  → HEATING season: allow down to comfort_c − {max_safe_drift:.1f}°C (drift cool)
+  → Empirical basis: thermal mass sustains ±{max_safe_drift:.1f}°C drift for
+    60–90 min in a well-insulated home before requiring HVAC intervention.
+
+### Rule 3 — Mild Weather (5°C ≤ T_out ≤ 15°C, empirical avg 0.09–0.13 kW)
+  No pre-conditioning needed. Hold comfort_c exactly.
+  HVAC runtime is minimal at these outdoor temperatures in historical data.
+
+### Rule 4 — Humidity Override (RH > 70%)
+  In summer, high humidity adds +12% latent load.
+  Lower setpoint by 0.5°C below comfort_c to account for latent dehumidification.
+
+## Optimisation Goal
+Minimize J = Σ P_HVAC(t) · Price(t)
+While keeping T_in in [{comfort_c - comfort_tol:.1f}, {comfort_c + comfort_tol:.1f}] °C at all times.
+
+## Output — JSON ONLY, no other text:
+{{
+  "optimal_setpoint_c": {comfort_c:.1f},
+  "strategy": "Cite empirical pattern + specific reason for this exact setpoint value",
+  "expected_cost_saving_pct": 0.0,
+  "next_review_minutes": 30,
+  "pre_conditioning": false,
+  "comfort_impact": "none | slight | moderate"
+}}"""
+
+
+def _optimize_setpoint_physics(
+    house_data:   Dict[str, Any],
+    t_in:         float,
+    comfort_c:    float,
+    comfort_tol:  float,
+    weather_rows: List[Dict],
+    current_hour: int,
+) -> Dict[str, Any]:
+    horizon = min(6, len(weather_rows))
+    prices_ahead = [get_electricity_price((current_hour + i) % 24) for i in range(horizon)]
+    current_price = prices_ahead[0]
+
+    t_out_avg = sum(
+        _parse_weather(weather_rows[min(i, len(weather_rows) - 1)])["t_out"]
+        for i in range(horizon)
+    ) / max(horizon, 1)
+
+    cooling_season = t_out_avg >= comfort_c
+
+    max_future_price = max(prices_ahead[1:4]) if len(prices_ahead) > 3 else current_price
+    peak_coming      = max_future_price > current_price + 0.01
+
+    geo = _house_geometry(house_data)
+    ins = _insulation_params(house_data)
+    c_home = _thermal_mass(geo["floor_area_m2"])
+    thermal_inertia_factor = min(1.0, max(0.2, c_home / 5e6))
+    insulation_factor = min(1.0, max(0.3, 0.5 / ins["u_value"]))
+    drift_capacity = (thermal_inertia_factor + insulation_factor) / 2.0
+
+    cap_heat = _hvac_capacity(house_data, "heating")
+    cap_cool = _hvac_capacity(house_data, "cooling")
+    hvac_power = (cap_heat + cap_cool) / 2.0
+    recovery_factor = min(1.0, hvac_power / 5.0)
+
+    pre_shift   = comfort_tol * (0.50 + 0.35 * drift_capacity)
+    coast_shift = comfort_tol * (0.50 + 0.40 * drift_capacity)
+
+    if current_price <= _TOU_OFF_PEAK:
+        if peak_coming:
+            if cooling_season:
+                setpoint = comfort_c - pre_shift
+                strategy = (
+                    f"🧊 Pre-cooling to {comfort_c - pre_shift:.1f}°C off-peak (${current_price}/kWh) "
+                    f"ahead of ${max_future_price:.3f}/kWh peak. "
+                    f"[Your {house_data.get('insulation_quality','average')} home can safely drift {comfort_tol * drift_capacity:.1f}°C "
+                    f"without exceeding comfort band]"
+                )
+                pre_cond = True
+            else:
+                setpoint = comfort_c + pre_shift
+                strategy = (
+                    f"🔥 Pre-heating to {comfort_c + pre_shift:.1f}°C off-peak (${current_price}/kWh) "
+                    f"ahead of ${max_future_price:.3f}/kWh peak. "
+                    f"[Your {house_data.get('insulation_quality','average')} home with {house_data.get('hvac_type','central')} HVAC "
+                    f"can safely drift {comfort_tol * drift_capacity:.1f}°C]"
+                )
+                pre_cond = True
+        else:
+            setpoint = comfort_c
+            strategy = f"☑️ Off-peak (${current_price}/kWh), no peak imminent — holding your comfort {comfort_c:.1f}°C."
+            pre_cond = False
+
+    elif current_price >= _TOU_ON_PEAK:
+        if cooling_season:
+            setpoint = comfort_c + coast_shift
+            strategy = (
+                f"🧠 On-peak (${current_price}/kWh) — relaxing to {comfort_c + coast_shift:.1f}°C, "
+                f"coasting on thermal mass. [Your {geo['floor_area_m2']:.0f}m² {house_data.get('insulation_quality','average')} home "
+                f"has {c_home/1e6:.1f} MJ/°C thermal inertia — will hold this temperature safely]"
+            )
+        else:
+            setpoint = comfort_c - coast_shift
+            strategy = (
+                f"🧠 On-peak (${current_price}/kWh) — relaxing to {comfort_c - coast_shift:.1f}°C, "
+                f"coasting on thermal mass. [Your {geo['floor_area_m2']:.0f}m² {house_data.get('insulation_quality','average')} home "
+                f"has {c_home/1e6:.1f} MJ/°C thermal inertia — will hold safely]"
+            )
+        pre_cond = False
+
+    else:
+        setpoint = comfort_c
+        strategy = (
+            f"⚖️ Mid-peak (${current_price}/kWh) — holding your comfort {comfort_c:.1f}°C. "
+            f"[With your {house_data.get('hvac_type','central')} system, "
+            f"the balance favors staying at your preferred temperature.]"
+        )
+        pre_cond = False
+
+    setpoint = max(comfort_c - comfort_tol, min(comfort_c + comfort_tol, setpoint))
+
+    saving_pct = 15.0 if pre_cond else 0.0
+
+    drift_c = setpoint - comfort_c
+    band_min = round(comfort_c - comfort_tol, 1)
+    band_max = round(comfort_c + comfort_tol, 1)
+
+    if abs(drift_c) < 0.1:
+        drift_reason = f"User comfort centre is {comfort_c:.1f}°C (±{comfort_tol:.1f}°C band = {band_min}–{band_max}°C). AI suggests {setpoint:.1f}°C (drift: {drift_c:+.1f}°C). No adjustment ✓"
+    elif abs(drift_c) <= comfort_tol:
+        drift_reason = f"User comfort centre is {comfort_c:.1f}°C (±{comfort_tol:.1f}°C band = {band_min}–{band_max}°C). AI suggests {setpoint:.1f}°C (drift: {drift_c:+.1f}°C). Within safe comfort band ✓"
+    else:
+        drift_reason = f"User comfort centre is {comfort_c:.1f}°C (±{comfort_tol:.1f}°C band = {band_min}–{band_max}°C). AI suggests {setpoint:.1f}°C (drift: {drift_c:+.1f}°C). WARNING: Outside band ✗"
+
+    return {
+        "optimal_setpoint_c":       round(setpoint, 1),
+        "comfort_center_c":         round(comfort_c, 1),
+        "comfort_tolerance_c":      round(comfort_tol, 1),
+        "comfort_band_min_c":       band_min,
+        "comfort_band_max_c":       band_max,
+        "drift_from_comfort_c":     round(drift_c, 1),
+        "drift_reason":             drift_reason,
+        "strategy":                  strategy,
+        "expected_cost_saving_pct":  saving_pct,
+        "next_review_minutes":       30,
+        "pre_conditioning":          pre_cond,
+        "comfort_impact":            "slight" if pre_cond else "none",
+        "source":                    "physics",
+    }
+
+
+def optimize_setpoint_ai(
+    house_data:    Dict[str, Any],
+    t_in:          float,
+    weather_rows:  List[Dict],
+    comfort_c:     float = 22.0,
+    comfort_tol:   float = 2.0,
+) -> Dict[str, Any]:
+    comfort_c   = max(15.0, min(30.0, float(comfort_c)))
+    comfort_tol = max(0.5,  min(4.0,  float(comfort_tol)))
+    t_in        = max(5.0,  min(40.0, float(t_in)))
+
+    current_hour = datetime.now().hour
+
+    band_min = round(comfort_c - comfort_tol, 1)
+    band_max = round(comfort_c + comfort_tol, 1)
+
+    if not weather_rows:
+        return {
+            "optimal_setpoint_c":       comfort_c,
+            "comfort_center_c":         round(comfort_c, 1),
+            "comfort_tolerance_c":      round(comfort_tol, 1),
+            "comfort_band_min_c":       band_min,
+            "comfort_band_max_c":       band_max,
+            "drift_from_comfort_c":     0.0,
+            "drift_reason":             f"No weather forecast. Using comfort centre {comfort_c:.1f}°C.",
+            "strategy":                  "No weather forecast available — using comfort setpoint.",
+            "expected_cost_saving_pct":  0.0,
+            "next_review_minutes":       30,
+            "pre_conditioning":          False,
+            "comfort_impact":            "none",
+            "source":                    "physics",
+        }
+
+    prompt = _build_setpoint_prompt(
+        house_data, t_in, comfort_c, comfort_tol, weather_rows, current_hour
+    )
+    result = _call_genai(prompt)
+
+    if result is not None and "optimal_setpoint_c" in result:
+        sp = float(result["optimal_setpoint_c"])
+        sp = max(comfort_c - comfort_tol, min(comfort_c + comfort_tol, sp))
+        drift_c = sp - comfort_c
+
+        result["optimal_setpoint_c"] = round(sp, 1)
+        result["comfort_center_c"] = round(comfort_c, 1)
+        result["comfort_tolerance_c"] = round(comfort_tol, 1)
+        result["comfort_band_min_c"] = band_min
+        result["comfort_band_max_c"] = band_max
+        result["drift_from_comfort_c"] = round(drift_c, 1)
+        result.setdefault("drift_reason",
+            f"User comfort centre is {comfort_c:.1f}°C (±{comfort_tol:.1f}°C band = {band_min}–{band_max}°C). "
+            f"AI suggests {sp:.1f}°C (drift: {drift_c:+.1f}°C). Within safe comfort band ✓"
+        )
+        result.setdefault("source", "genai")
+        result.setdefault("pre_conditioning", False)
+        result.setdefault("comfort_impact", "none")
+        result.setdefault("next_review_minutes", 30)
+        return result
+
+    return _optimize_setpoint_physics(
+        house_data, t_in, comfort_c, comfort_tol, weather_rows, current_hour
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SECTION 6 — Data Classes
+# ════════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class HVACAction:
-    """Represents a scheduled HVAC action."""
     hour: int
-    mode: str  # "heat", "cool", "pre-heat", "pre-cool", "off"
+    mode: str
     start_time: str
     end_time: str
     power_kw: float
@@ -87,688 +1258,187 @@ class HVACAction:
 
 @dataclass
 class HVACSchedule:
-    """Complete HVAC schedule for 24 hours."""
     actions: List[HVACAction]
     total_cost: float
     total_energy_kwh: float
     comfort_score: float
     generated_at: str
-    
+
     def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization."""
         return {
-            "actions": [asdict(a) for a in self.actions],
-            "total_cost": self.total_cost,
+            "actions":          [asdict(a) for a in self.actions],
+            "total_cost":       self.total_cost,
             "total_energy_kwh": self.total_energy_kwh,
-            "comfort_score": self.comfort_score,
-            "generated_at": self.generated_at
+            "comfort_score":    self.comfort_score,
+            "generated_at":     self.generated_at,
         }
 
 
-# ============================================================
-# Realistic Thermal Model Reference
-# ============================================================
-
-THERMAL_MODEL_REFERENCE = """
-## Realistic Thermal Physics Model
-
-### Building Heat Balance Equation
-Q_total = Q_envelope + Q_infiltration + Q_solar + Q_internal + Q_hvac
-
-### 1. Envelope Heat Loss/Gain (through walls, roof, windows)
-Q_envelope = U_total × A_total × (T_outdoor - T_indoor)
-
-U-values by insulation quality (W/m²K):
-- Excellent insulation: U = 0.3 (well-insulated modern home)
-- Average insulation: U = 0.8 (typical home)
-- Poor insulation: U = 1.5 (old/uninsulated home)
-
-Typical surface areas for house sizes:
-- 1000 sqft house: ~250 m² total envelope
-- 1500 sqft house: ~320 m² total envelope
-- 2500 sqft house: ~450 m² total envelope
-
-### 2. Air Infiltration Heat Loss
-Q_infiltration = 0.33 × ACH × V × (T_outdoor - T_indoor)
-
-Air Changes per Hour (ACH):
-- Excellent (tight): 0.2 ACH
-- Average: 0.5 ACH
-- Poor (leaky): 1.0 ACH
-
-### 3. Solar Heat Gain
-Q_solar = SHGC × A_windows × I_solar × 0.5 (factor for orientation)
-- SHGC typical: 0.25-0.6
-- Window area: ~15% of floor area
-
-### 4. HVAC Capacity (Realistic ranges)
-Heating capacity by system:
-- Central furnace: 8-15 kW (scaled by house size)
-- Heat pump: 2-5 kW
-- Mini-split: 1-3 kW per head
-- Space heater: 1-2 kW
-
-Cooling capacity:
-- Central AC: 3-7 kW (1 ton = 3.5 kW)
-- Heat pump: 2-5 kW
-- Mini-split: 1-2 kW
-- Window AC: 0.5-1.5 kW
-
-### 5. Temperature Change Rate
-For a typical house:
-- Thermal mass (C): 50,000 - 150,000 kJ/°C depending on construction
-- Temperature change: ΔT = (Q_total × Δt) / C
-
-Realistic expectations for 5-minute timestep:
-- HVAC heating: +0.1 to +0.4°C 
-- HVAC cooling: -0.1 to -0.3°C
-- Natural drift (HVAC off): -0.02 to +0.02°C typically
-- Extreme conditions: up to ±0.1°C drift
-
-### 6. COP (Coefficient of Performance)
-Heating:
-- Heat pump: COP 2.5-4.0 (varies with outdoor temp)
-- Electric furnace: COP 1.0
-- Gas furnace: efficiency 80-95%
-
-Cooling:
-- Central AC: COP 3.0-4.5
-- Heat pump: COP 3.0-4.5
-- Window AC: COP 2.5-3.5
-"""
-
-# ============================================================
-# GenAI Prompt Builders
-# ============================================================
-
-def build_realtime_simulation_prompt(
-    house_data: Dict[str, Any],
-    current_indoor_temp_c: float,
-    target_temp_c: float,
-    weather_data: Dict[str, Any],
-    hvac_schedule: Optional[Dict] = None,
-) -> str:
-    """Build a realistic prompt for real-time HVAC simulation."""
-    
-    current_hour = datetime.now().hour
-    current_minute = datetime.now().minute
-    
-    # Get HVAC specs
-    hvac_type = house_data.get('hvac_type', 'central')
-    house_size = float(house_data.get('home_size', 1500))
-    insulation = house_data.get('insulation_quality', 'average')
-    house_age = int(house_data.get('age_of_house', 20))
-    
-    # Calculate realistic HVAC capacities
-    heating_capacity = get_hvac_capacity(hvac_type, house_size, "heating")
-    cooling_capacity = get_hvac_capacity(hvac_type, house_size, "cooling")
-    
-    # Get scheduled mode if available
-    scheduled_mode = "off"
-    if hvac_schedule and "actions" in hvac_schedule:
-        for action in hvac_schedule["actions"]:
-            if action.get("hour") == current_hour:
-                scheduled_mode = action.get("mode", "off")
-                break
-    
-    # Weather data
-    outdoor_temp = weather_data.get('temperature_2m', 20)
-    humidity = weather_data.get('relative_humidity_2m', 50)
-    wind_speed = weather_data.get('wind_speed_10m', 0)
-    solar = weather_data.get('shortwave_radiation', 0)
-    
-    # Temperature difference for context
-    temp_diff = target_temp_c - current_indoor_temp_c
-    
-    prompt = f"""You are a realistic HVAC simulation AI. Simulate exactly what happens in the next 5 minutes.
-
-{THERMAL_MODEL_REFERENCE}
-
-## House Specifications
-- Size: {house_size} sqft
-- Age: {house_age} years (affects insulation degradation)
-- Insulation Quality: {insulation}
-- HVAC Type: {hvac_type}
-- HVAC Heating Capacity: {heating_capacity} kW
-- HVAC Cooling Capacity: {cooling_capacity} kW
-
-## Current Conditions
-- Time: {current_hour:02d}:{current_minute:02d}
-- Indoor Temperature: {current_indoor_temp_c:.1f}°C
-- Target Temperature: {target_temp_c:.1f}°C
-- Temperature Gap: {temp_diff:+.1f}°C ({"needs heating" if temp_diff > 0.3 else "needs cooling" if temp_diff < -0.3 else "at target"})
-- Outdoor Temperature: {outdoor_temp}°C
-- Outdoor Humidity: {humidity}%
-- Wind Speed: {wind_speed} m/s
-- Solar Radiation: {solar} W/m²
-- Scheduled HVAC Mode: {scheduled_mode}
-
-## HVAC Control Logic
-Apply these realistic rules:
-1. DEADBAND: Only turn ON if temp is more than 0.5°C away from target
-2. TURN OFF: When within 0.3°C of target to prevent overshooting
-3. REALISTIC RATES: 
-   - Heating raises temp ~0.1-0.3°C per 5 minutes depending on capacity
-   - Cooling lowers temp ~0.1-0.2°C per 5 minutes
-   - Natural drift is very slow: ±0.01-0.05°C per 5 minutes
-4. NEVER exceed target by more than 0.3°C (overshoot protection)
-
-## Energy Calculation
-- If heating: Power = {heating_capacity} kW
-- If cooling: Power = {cooling_capacity} kW
-- Energy for 5 min: kWh = power_kw × (5/60)
-- Current electricity rate: ${get_electricity_price(current_hour)}/kWh
-
-## Your Task
-Determine:
-1. Should HVAC run? (based on deadband logic)
-2. What will indoor temperature be in 5 minutes?
-3. How much energy will be used?
-
-## CRITICAL CONSTRAINTS
-- Temperature MUST stay realistic (between 10°C and 35°C indoor)
-- Temperature change in 5 minutes should be SMALL (max ±0.5°C)
-- If HVAC is off, temp drifts slowly toward outdoor temp
-- Power consumption must match the HVAC type specified
-
-## Output (JSON only, no markdown):
-{{
-    "new_temp_c": {round(current_indoor_temp_c, 1)},
-    "hvac_mode": "off",
-    "hvac_power_kw": 0.0,
-    "hvac_energy_kwh": 0.0,
-    "electricity_rate": {get_electricity_price(current_hour)},
-    "cost_this_step": 0.0,
-    "should_run_hvac": false,
-    "reason": "Explanation of decision"
-}}
-"""
-    return prompt
-
-
-def build_schedule_prompt(
-    house_data: Dict[str, Any],
-    weather_forecast: List[Dict],
-    current_indoor_temp_c: float,
-    target_temp_c: float,
-) -> str:
-    """Build prompt for realistic 24-hour HVAC schedule generation starting from current hour."""
-    
-    # Get current time
-    now = datetime.now()
-    current_hour = now.hour
-    current_minute = now.minute
-    
-    # House specs
-    hvac_type = house_data.get('hvac_type', 'central')
-    house_size = float(house_data.get('home_size', 1500))
-    insulation = house_data.get('insulation_quality', 'average')
-    house_age = int(house_data.get('age_of_house', 20))
-    
-    # HVAC capacities
-    heating_capacity = get_hvac_capacity(hvac_type, house_size, "heating")
-    cooling_capacity = get_hvac_capacity(hvac_type, house_size, "cooling")
-    
-    # Format weather forecast starting from current hour for next 24 hours
-    weather_lines = []
-    for i in range(24):
-        # Calculate the actual hour (wrapping around midnight)
-        actual_hour = (current_hour + i) % 24
-        # Get weather for this hour (use modulo to wrap around forecast data)
-        weather_idx = min(i, len(weather_forecast) - 1)
-        row = weather_forecast[weather_idx] if weather_idx < len(weather_forecast) else weather_forecast[-1]
-        temp = row.get("temperature_2m", 20)
-        solar = row.get("shortwave_radiation", 0)
-        price = get_electricity_price(actual_hour)
-        
-        # Show relative time for clarity
-        if i == 0:
-            time_label = "NOW"
-        elif i == 1:
-            time_label = "in 1 hour"
-        else:
-            time_label = f"in {i} hours"
-        
-        weather_lines.append(f"  {actual_hour:02d}:00 ({time_label}): {temp}°C outdoor, {solar}W/m² solar, ${price}/kWh")
-    
-    prompt = f"""You are an HVAC scheduling AI. Create a realistic 24-hour schedule starting from NOW to maintain comfort while minimizing cost.
-
-{THERMAL_MODEL_REFERENCE}
-
-## CURRENT TIME: {current_hour:02d}:{current_minute:02d}
-
-## House Specifications  
-- Size: {house_size} sqft
-- Age: {house_age} years
-- Insulation: {insulation}
-- HVAC Type: {hvac_type}
-- Heating Capacity: {heating_capacity} kW
-- Cooling Capacity: {cooling_capacity} kW
-
-## User Settings
-- Target Temperature: {target_temp_c}°C
-- Acceptable Range: {target_temp_c - 1.0}°C to {target_temp_c + 1.0}°C
-- Current Indoor Temp: {current_indoor_temp_c}°C
-
-## Weather Forecast & Electricity Prices (Next 24 Hours Starting NOW)
-{chr(10).join(weather_lines)}
-
-## Scheduling Strategy
-1. PRE-CONDITION during off-peak hours ($0.08/kWh, 10PM-6AM) when beneficial
-2. COAST through peak hours ($0.20/kWh, 4PM-9PM) using thermal mass
-3. AVOID running during peak unless necessary for comfort
-4. Consider that temperature drifts slowly - house has thermal mass
-5. Start schedule from CURRENT HOUR ({current_hour:02d}:00), not from midnight
-
-## Energy & Cost Calculations
-For each hour where HVAC runs:
-- Heating: power_kw = {heating_capacity}, energy = {heating_capacity} kWh, cost = {heating_capacity} × rate
-- Cooling: power_kw = {cooling_capacity}, energy = {cooling_capacity} kWh, cost = {cooling_capacity} × rate
-- Off: power_kw = 0, energy = 0, cost = 0
-
-## CRITICAL: Generate schedule starting from hour {current_hour} (current time)
-The first action MUST be for hour {current_hour} (now).
-Then continue for the next 23 hours, wrapping around midnight if needed.
-
-## Output Format (JSON only, no markdown):
-{{
-    "actions": [
-        {{
-            "hour": {current_hour},
-            "mode": "off|heat|cool|pre-heat|pre-cool",
-            "start_time": "{current_hour:02d}:00",
-            "end_time": "{(current_hour+1)%24:02d}:00", 
-            "power_kw": 0.0,
-            "cost": 0.0,
-            "reason": "Why this decision for RIGHT NOW",
-            "predicted_temp_c": {current_indoor_temp_c},
-            "target_temp_c": {target_temp_c}
-        }},
-        ... (continue for next 23 hours)
-    ],
-    "total_cost": 0.0,
-    "total_energy_kwh": 0.0,
-    "comfort_score": 95.0,
-    "strategy_summary": "Brief optimization strategy"
-}}
-
-Generate exactly 24 actions starting from hour {current_hour}. Be REALISTIC with power/energy values matching the HVAC specs above.
-"""
-    return prompt
-
-
-# ============================================================
-# GenAI API Calls
-# ============================================================
-
-def call_genai(prompt: str) -> Optional[Dict]:
-    """Call GenAI and parse JSON response."""
-    if not GENAI_KEY:
-        print("Warning: GENAI_KEY not configured")
-        return None
-    
-    try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=0.1,  # Low for consistent calculations
-                max_output_tokens=4096,
-                response_mime_type="application/json",
-            )
-        )
-        
-        response_text = response.text.strip()
-        
-        # Clean up response
-        if "```" in response_text:
-            response_text = re.sub(r'^```(?:json)?\s*\n?', '', response_text)
-            response_text = re.sub(r'\n?```\s*$', '', response_text)
-            response_text = response_text.strip()
-        
-        # Parse JSON with fallbacks
-        result = None
-        
-        try:
-            result = json.loads(response_text)
-        except json.JSONDecodeError:
-            # Try to extract JSON object
-            first_brace = response_text.find('{')
-            last_brace = response_text.rfind('}')
-            if first_brace != -1 and last_brace > first_brace:
-                try:
-                    result = json.loads(response_text[first_brace:last_brace + 1])
-                except json.JSONDecodeError:
-                    pass
-        
-        # Fix trailing commas
-        if result is None:
-            fixed = re.sub(r',\s*([}\]])', r'\1', response_text)
-            try:
-                result = json.loads(fixed)
-            except json.JSONDecodeError:
-                pass
-        
-        return result
-        
-    except Exception as e:
-        print(f"GenAI API error: {e}")
-        return None
-
-
-# ============================================================
-# Main Simulation Functions
-# ============================================================
+# ════════════════════════════════════════════════════════════════════════════
+#  SECTION 7 — Public API (called by indoor_temperature.py)
+# ════════════════════════════════════════════════════════════════════════════
 
 def simulate_step_with_hvac(
-    house_data: Dict[str, Any],
+    house_data:           Dict[str, Any],
     current_indoor_temp_c: float,
-    target_temp_c: float,
-    weather_data: Dict[str, Any],
-    hvac_schedule: Optional[Dict] = None,
-    personal_comfort: float = 22.0  # Now this is the actual target temp
+    target_temp_c:        Optional[float] = None,
+    weather_data:         Dict[str, Any] = None,
+    hvac_schedule:        Optional[Dict] = None,
+    personal_comfort:     Optional[float] = None,
+    dt_s:                 float = DT_STEP,
 ) -> Dict[str, Any]:
-    """
-    Simulate one 5-minute timestep with realistic HVAC control.
-    """
-    # Validate inputs - keep temperature realistic
-    current_indoor_temp_c = max(5.0, min(40.0, float(current_indoor_temp_c)))
-    target_temp_c = max(15.0, min(30.0, float(target_temp_c)))
-    
-    prompt = build_realtime_simulation_prompt(
-        house_data=house_data,
-        current_indoor_temp_c=current_indoor_temp_c,
-        target_temp_c=target_temp_c,
-        weather_data=weather_data,
-        hvac_schedule=hvac_schedule,
+    if target_temp_c is None:
+        target_temp_c = house_data.get("personal_comfort", 22.0)
+    if personal_comfort is None:
+        personal_comfort = house_data.get("personal_comfort", 22.0)
+
+    t_in     = max(5.0,  min(40.0, float(current_indoor_temp_c)))
+    t_target = max(15.0, min(30.0, float(target_temp_c)))
+
+    if dt_s >= 30:
+        prompt = _build_step_prompt(house_data, t_in, t_target, weather_data, hvac_schedule)
+        result = _call_genai(prompt)
+
+        if result is not None:
+            new_t = float(result.get("new_temp_c", t_in))
+            raw_delta = new_t - t_in
+            scaled_delta = raw_delta * (dt_s / DT_STEP)
+            max_delta = 0.5 * (dt_s / DT_STEP)
+            scaled_delta = max(-max_delta, min(max_delta, scaled_delta))
+            new_t = max(5.0, min(40.0, t_in + scaled_delta))
+            result["new_temp_c"] = round(new_t, 2)
+            result.setdefault("engine", "genai")
+            return result
+
+    return _physics_step(
+        house_data   = house_data,
+        t_in         = t_in,
+        t_target     = t_target,
+        weather_data = weather_data,
+        dt_s         = dt_s,
     )
-    
-    result = call_genai(prompt)
-    
-    if result is None:
-        # Fallback with realistic physics
-        return _fallback_simulation(
-            house_data=house_data,
-            current_indoor_temp_c=current_indoor_temp_c,
-            target_temp_c=target_temp_c,
-            weather_data=weather_data,
-        )
-    
-    # Validate and constrain the result
-    new_temp = float(result.get("new_temp_c", current_indoor_temp_c))
-    
-    # Constrain temperature change to realistic values
-    max_change = 0.5  # Max 0.5°C change in 5 minutes
-    temp_change = new_temp - current_indoor_temp_c
-    if abs(temp_change) > max_change:
-        new_temp = current_indoor_temp_c + (max_change if temp_change > 0 else -max_change)
-    
-    # Keep temperature in realistic range
-    new_temp = max(10.0, min(35.0, new_temp))
-    
-    result["new_temp_c"] = round(new_temp, 2)
-    
-    return result
-
-
-def _fallback_simulation(
-    house_data: Dict[str, Any],
-    current_indoor_temp_c: float,
-    target_temp_c: float,
-    weather_data: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Fallback simulation when GenAI is unavailable."""
-    outdoor_temp = float(weather_data.get("temperature_2m", 20))
-    hvac_type = house_data.get('hvac_type', 'central')
-    house_size = float(house_data.get('home_size', 1500))
-    insulation = house_data.get('insulation_quality', 'average')
-    
-    # Insulation affects drift rate
-    drift_rates = {"excellent": 0.005, "average": 0.015, "poor": 0.03}
-    drift_rate = drift_rates.get(insulation, 0.015)
-    
-    # Natural temperature drift toward outdoor
-    natural_drift = (outdoor_temp - current_indoor_temp_c) * drift_rate
-    
-    # Determine HVAC mode based on deadband
-    temp_diff = target_temp_c - current_indoor_temp_c
-    hvac_mode = "off"
-    power_kw = 0
-    hvac_effect = 0
-    
-    if temp_diff > 0.5:  # Need heating
-        hvac_mode = "heating"
-        power_kw = get_hvac_capacity(hvac_type, house_size, "heating")
-        hvac_effect = 0.2  # Heat by ~0.2°C
-    elif temp_diff < -0.5:  # Need cooling
-        hvac_mode = "cooling"
-        power_kw = get_hvac_capacity(hvac_type, house_size, "cooling")
-        hvac_effect = -0.15  # Cool by ~0.15°C
-    
-    # Calculate new temperature
-    new_temp = current_indoor_temp_c + natural_drift + hvac_effect
-    new_temp = max(10.0, min(35.0, new_temp))  # Keep realistic
-    
-    # Energy and cost
-    current_hour = datetime.now().hour
-    energy_kwh = power_kw * (5 / 60)  # 5 minutes
-    rate = get_electricity_price(current_hour)
-    cost = energy_kwh * rate
-    
-    return {
-        "new_temp_c": round(new_temp, 2),
-        "hvac_mode": hvac_mode,
-        "hvac_power_kw": round(power_kw, 2),
-        "hvac_energy_kwh": round(energy_kwh, 4),
-        "electricity_rate": rate,
-        "cost_this_step": round(cost, 4),
-        "should_run_hvac": hvac_mode != "off",
-        "reason": f"Fallback: {'Heating needed' if hvac_mode == 'heating' else 'Cooling needed' if hvac_mode == 'cooling' else 'At target temperature'}"
-    }
 
 
 def generate_hvac_schedule(
-    house_data: Dict[str, Any],
-    weather_rows: List[Dict],
+    house_data:           Dict[str, Any],
+    weather_rows:         List[Dict],
     current_indoor_temp_c: float,
-    personal_comfort: float = 22.0,  # This is the target temp directly
-    target_temp_c: float = 22.0
+    personal_comfort:     Optional[float] = None,
+    target_temp_c:        Optional[float] = None,
 ) -> HVACSchedule:
-    """Generate an optimized 24-hour HVAC schedule."""
-    
-    # Use the target_temp_c (which should be validated/set from personal_comfort)
-    target = max(15.0, min(30.0, float(target_temp_c)))
-    
-    prompt = build_schedule_prompt(
-        house_data=house_data,
-        weather_forecast=weather_rows,
-        current_indoor_temp_c=current_indoor_temp_c,
-        target_temp_c=target,
-    )
-    
-    result = call_genai(prompt)
-    
-    if result is None or "actions" not in result:
-        return _generate_fallback_schedule(
-            house_data=house_data,
-            current_indoor_temp_c=current_indoor_temp_c,
-            target_temp_c=target,
-            weather_rows=weather_rows,
+    if target_temp_c is None:
+        target_temp_c = house_data.get("personal_comfort", 22.0)
+    if personal_comfort is None:
+        personal_comfort = house_data.get("personal_comfort", 22.0)
+
+    t_target = max(15.0, min(30.0, float(target_temp_c)))
+    t_in     = max(5.0,  min(40.0, float(current_indoor_temp_c)))
+    current_hour = datetime.now().hour
+
+    prompt = _build_schedule_prompt(house_data, weather_rows, t_in, t_target)
+    result = _call_genai(prompt)
+
+    if result is not None and "actions" in result and len(result["actions"]) >= 12:
+        actions = []
+        for a in result["actions"]:
+            actions.append(HVACAction(
+                hour             = int(a.get("hour", 0)),
+                mode             = a.get("mode", "off"),
+                start_time       = a.get("start_time", "00:00"),
+                end_time         = a.get("end_time",   "01:00"),
+                power_kw         = float(a.get("power_kw", 0)),
+                cost             = float(a.get("cost", 0)),
+                reason           = a.get("reason", ""),
+                predicted_temp_c = float(a.get("predicted_temp_c", t_target)),
+                target_temp_c    = t_target,
+            ))
+        while len(actions) < 24:
+            h = (current_hour + len(actions)) % 24
+            actions.append(HVACAction(
+                hour=h, mode="off",
+                start_time=f"{h:02d}:00", end_time=f"{(h+1)%24:02d}:00",
+                power_kw=0.0, cost=0.0, reason="No action scheduled",
+                predicted_temp_c=t_target, target_temp_c=t_target,
+            ))
+        return HVACSchedule(
+            actions          = actions[:24],
+            total_cost       = round(float(result.get("total_cost", 0)), 3),
+            total_energy_kwh = round(float(result.get("total_energy_kwh", 0)), 2),
+            comfort_score    = float(result.get("comfort_score", 85)),
+            generated_at     = datetime.now().isoformat(),
         )
-    
-    # Parse actions
-    actions = []
-    total_cost = 0
-    total_energy = 0
-    
-    for action_data in result.get("actions", []):
-        power = float(action_data.get("power_kw", 0))
-        cost = float(action_data.get("cost", 0))
-        total_cost += cost
-        total_energy += power  # Power for 1 hour = energy in kWh
-        
-        actions.append(HVACAction(
-            hour=int(action_data.get("hour", 0)),
-            mode=action_data.get("mode", "off"),
-            start_time=action_data.get("start_time", "00:00"),
-            end_time=action_data.get("end_time", "01:00"),
-            power_kw=power,
-            cost=cost,
-            reason=action_data.get("reason", ""),
-            predicted_temp_c=float(action_data.get("predicted_temp_c", target)),
-            target_temp_c=target
-        ))
-    
-    # Ensure 24 hours
-    while len(actions) < 24:
-        hour = len(actions)
-        actions.append(HVACAction(
-            hour=hour,
-            mode="off",
-            start_time=f"{hour:02d}:00",
-            end_time=f"{(hour+1)%24:02d}:00",
-            power_kw=0,
-            cost=0,
-            reason="No action scheduled",
-            predicted_temp_c=target,
-            target_temp_c=target
-        ))
-    
-    return HVACSchedule(
-        actions=actions[:24],
-        total_cost=round(result.get("total_cost", total_cost), 2),
-        total_energy_kwh=round(result.get("total_energy_kwh", total_energy), 2),
-        comfort_score=float(result.get("comfort_score", 85)),
-        generated_at=datetime.now().isoformat()
+
+    sched_dict = _physics_schedule(
+        house_data, weather_rows, t_in, t_target,
+        current_hour, datetime.now().minute
     )
-
-
-def _generate_fallback_schedule(
-    house_data: Dict[str, Any],
-    current_indoor_temp_c: float,
-    target_temp_c: float,
-    weather_rows: List[Dict]
-) -> HVACSchedule:
-    """Generate fallback schedule when GenAI unavailable."""
-    hvac_type = house_data.get('hvac_type', 'central')
-    house_size = float(house_data.get('home_size', 1500))
-    
-    actions = []
-    total_cost = 0
-    total_energy = 0
-    predicted_temp = current_indoor_temp_c
-    
-    for hour in range(24):
-        weather = weather_rows[hour] if hour < len(weather_rows) else weather_rows[-1]
-        outdoor_temp = float(weather.get("temperature_2m", 20))
-        
-        # Determine mode
-        mode = "off"
-        power = 0
-        
-        temp_diff = target_temp_c - predicted_temp
-        
-        if temp_diff > 1.0 or outdoor_temp < target_temp_c - 5:
-            mode = "heat"
-            power = get_hvac_capacity(hvac_type, house_size, "heating")
-            predicted_temp = min(target_temp_c + 0.5, predicted_temp + 1.0)
-        elif temp_diff < -1.0 or outdoor_temp > target_temp_c + 5:
-            mode = "cool"
-            power = get_hvac_capacity(hvac_type, house_size, "cooling")
-            predicted_temp = max(target_temp_c - 0.5, predicted_temp - 0.8)
-        else:
-            # Natural drift
-            drift = (outdoor_temp - predicted_temp) * 0.1
-            predicted_temp += drift
-        
-        price = get_electricity_price(hour)
-        cost = power * price
-        total_cost += cost
-        total_energy += power
-        
-        actions.append(HVACAction(
-            hour=hour,
-            mode=mode,
-            start_time=f"{hour:02d}:00",
-            end_time=f"{(hour+1)%24:02d}:00",
-            power_kw=power,
-            cost=round(cost, 2),
-            reason=f"Fallback: {'Heating' if mode == 'heat' else 'Cooling' if mode == 'cool' else 'Maintaining'} @ ${price}/kWh",
-            predicted_temp_c=round(predicted_temp, 1),
-            target_temp_c=target_temp_c
-        ))
-    
+    _action_fields = {f.name for f in HVACAction.__dataclass_fields__.values()}
+    actions = [
+        HVACAction(**{k: v for k, v in a.items() if k in _action_fields})
+        for a in sched_dict["actions"]
+    ]
     return HVACSchedule(
-        actions=actions,
-        total_cost=round(total_cost, 2),
-        total_energy_kwh=round(total_energy, 2),
-        comfort_score=75,
-        generated_at=datetime.now().isoformat()
+        actions          = actions,
+        total_cost       = sched_dict["total_cost"],
+        total_energy_kwh = sched_dict["total_energy_kwh"],
+        comfort_score    = sched_dict["comfort_score"],
+        generated_at     = sched_dict["generated_at"],
     )
 
 
 def predict_temperature(
-    house_data: Dict[str, Any],
+    house_data:          Dict[str, Any],
     current_indoor_temp_c: float,
-    weather_data: Dict[str, Any],
-    hvac_mode: str = "off",
-    target_temp_c: float = 22.0,
-    timestep_minutes: int = 5
+    weather_data:        Dict[str, Any],
+    hvac_mode:           str = "off",
+    target_temp_c:       Optional[float] = None,
+    timestep_minutes:    int = 5,
 ) -> Dict[str, Any]:
-    """Predict temperature (wrapper for simulate_step_with_hvac)."""
     return simulate_step_with_hvac(
-        house_data=house_data,
-        current_indoor_temp_c=current_indoor_temp_c,
-        target_temp_c=target_temp_c,
-        weather_data=weather_data,
-        hvac_schedule=None,
+        house_data            = house_data,
+        current_indoor_temp_c = current_indoor_temp_c,
+        target_temp_c         = target_temp_c,
+        weather_data          = weather_data,
     )
 
 
-# ============================================================
-# Helper Functions
-# ============================================================
+# ── Helper accessors ──────────────────────────────────────────────────────────
+
+def _parse_hhmm(t: str) -> int:
+    try:
+        parts = t.split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+    except Exception:
+        return 0
+
 
 def get_current_hvac_action(schedule: HVACSchedule) -> Optional[HVACAction]:
-    """Get HVAC action for current hour."""
-    current_hour = datetime.now().hour
-    for action in schedule.actions:
-        if action.hour == current_hour:
-            return action
-    return None
+    now = datetime.now()
+    now_mins = now.hour * 60 + now.minute
+    for a in schedule.actions:
+        if a.start_time and a.end_time:
+            start = _parse_hhmm(a.start_time)
+            end   = _parse_hhmm(a.end_time)
+            if start <= end:
+                if start <= now_mins < end:
+                    return a
+            else:
+                if now_mins >= start or now_mins < end:
+                    return a
+    return next((a for a in schedule.actions if a.hour == now.hour), None)
 
 
 def get_upcoming_actions(schedule: HVACSchedule, count: int = 5) -> List[HVACAction]:
-    """Get next N non-off HVAC actions (present and future only)."""
-    current_hour = datetime.now().hour
-    upcoming = []
-    
-    # Sort actions by how far in the future they are from current hour
-    def hours_until(action_hour):
-        diff = action_hour - current_hour
-        if diff < 0:
-            diff += 24  # Wrap around midnight
+    now      = datetime.now()
+    now_mins = now.hour * 60 + now.minute
+
+    def mins_until(a: HVACAction) -> int:
+        start = _parse_hhmm(a.start_time) if a.start_time else a.hour * 60
+        diff  = (start - now_mins) % (24 * 60)
         return diff
-    
-    # Filter and sort actions
-    sorted_actions = sorted(schedule.actions, key=lambda a: hours_until(a.hour))
-    
-    for action in sorted_actions:
-        hours_away = hours_until(action.hour)
-        # Only include present (0 hours away) and future (up to 12 hours ahead)
-        if hours_away <= 12 and action.mode != "off":
-            upcoming.append(action)
-            if len(upcoming) >= count:
-                break
-    
-    return upcoming
 
-
-def celsius_to_fahrenheit(c: float) -> float:
-    """Convert Celsius to Fahrenheit."""
-    return c * 9/5 + 32
-
-
-def fahrenheit_to_celsius(f: float) -> float:
-    """Convert Fahrenheit to Celsius."""
-    return (f - 32) * 5/9
+    active_or_future = [
+        a for a in schedule.actions
+        if a.mode != "off" and mins_until(a) <= 12 * 60
+    ]
+    return sorted(active_or_future, key=mins_until)[:count]
