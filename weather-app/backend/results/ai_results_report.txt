@@ -1,0 +1,426 @@
+====================================================================================
+  HVAC Capstone — Gemini AI vs Physics Comparison Report
+  Generated : 2026-03-15 20:17:35
+  Gemini    : ✓ LIVE — real Gemini responses
+====================================================================================
+
+────────────────────────────────────────────────────────────────────────────────────
+  SECTION 1 — What is being measured
+────────────────────────────────────────────────────────────────────────────────────
+
+  Three functions are called for each scenario.
+  Each is called twice: once through the Gemini routing path, and once
+  directly through the RC physics engine on identical inputs.
+
+    simulate_step_with_hvac()  → single 5-min temperature step + HVAC decision
+    generate_hvac_schedule()   → full 24-hour HVAC run schedule
+    optimize_setpoint_ai()     → optimal thermostat setpoint for current conditions
+
+  Key metrics:
+    ENGINE         → 'genai' = Gemini answered,  'physics' = fallback was used
+    LATENCY        → seconds the Gemini call took  (physics is always < 0.01 s)
+    CORRECT        → did the AI make the right on/off decision (gap vs deadband)
+    PLAUSIBLE      → does the AI schedule pass the RC energy floor check
+    DELTA vs PHYS  → AI value − Physics value  (0 = identical)
+    IN BAND        → setpoint stayed within user's ±2°C comfort band
+
+────────────────────────────────────────────────────────────────────────────────────
+  SECTION 2 — Test 1: simulate_step_with_hvac()  (single 5-min step)
+────────────────────────────────────────────────────────────────────────────────────
+
+  One step is tested per scenario at the most relevant hour for that season.
+  Physics is the ground truth — it solves the RC equation deterministically.
+  'Correct' = the engine made the right heat/cool/off decision based on the deadband.
+
+  Scenario                   Gap   DB   Need     AI Mode   Phys Mode    AI✓    Ph✓   Agree
+  ──────────────────────────────────────────────────────────────────────────────────
+  cold_winter_day            4.0  1.0     ON        heat     heating      ✓      ✓       ✓
+  extreme_cold               6.0  1.0     ON        heat     heating      ✓      ✓       ✓
+  mild_winter                2.0  1.0     ON        heat     heating      ✓      ✓       ✓
+  hot_summer_day             4.0  1.0     ON        cool     cooling      ✓      ✓       ✓
+  hot_dry_summer             5.0  1.0     ON        cool     cooling      ✓      ✓       ✓
+  mild_spring_day            1.0  1.0    OFF         off         off      ✓      ✓       ✓
+  rainy_fall_day             2.0  1.0     ON        heat     heating      ✓      ✓       ✓
+  shoulder_season            0.0  1.0    OFF         off         off      ✓      ✓       ✓
+
+  AI  correct: 8/8  (100%)
+  Physics correct: 8/8  (100%)
+
+  ◆ cold_winter_day  [GENAI]  latency=0.99s
+    Conditions : T_in=18.0°C → setpoint 22.0°C, T_out=-18.0°C  (hour 03:00)
+    Gap=4.0°C vs deadband=1.0°C → HVAC should turn ON
+    Metric                       AI / Gemini        Physics  Note
+                               ─────────────  ─────────────
+    HVAC mode                           heat        heating  ✓ agree
+    Temp change (°C)                  +0.160         +0.120  delta=+0.040
+    HVAC power (kW)                    9.290          9.290
+    Step cost ($)                     0.0674         0.0944
+    Decision correct?                 ✓ PASS         ✓ PASS
+    AI reason  : deadband: gap=-4.00°C vs ±1.0°C → mode=heat. LOWEST-DEMAND deep-night valley. 
+
+  ◆ extreme_cold  [GENAI]  latency=0.69s
+    Conditions : T_in=16.0°C → setpoint 22.0°C, T_out=-26.0°C  (hour 05:00)
+    Gap=6.0°C vs deadband=1.0°C → HVAC should turn ON
+    Metric                       AI / Gemini        Physics  Note
+                               ─────────────  ─────────────
+    HVAC mode                           heat        heating  ✓ agree
+    Temp change (°C)                  +0.140         +0.100  delta=+0.040
+    HVAC power (kW)                    9.290          9.290
+    Step cost ($)                     0.0674         0.0944
+    Decision correct?                 ✓ PASS         ✓ PASS
+    AI reason  : deadband: gap=-6.00°C vs ±1.0°C → mode=heat. MORNING SURGE peak. T_out=-26.0°C
+
+  ◆ mild_winter  [GENAI]  latency=1.23s
+    Conditions : T_in=20.0°C → setpoint 22.0°C, T_out=-5.9°C  (hour 06:00)
+    Gap=2.0°C vs deadband=1.0°C → HVAC should turn ON
+    Metric                       AI / Gemini        Physics  Note
+                               ─────────────  ─────────────
+    HVAC mode                           heat        heating  ✓ agree
+    Temp change (°C)                  +0.180         +0.130  delta=+0.050
+    HVAC power (kW)                    9.290          9.290
+    Step cost ($)                     0.0674         0.0944
+    Decision correct?                 ✓ PASS         ✓ PASS
+    AI reason  : deadband: gap=-2.00°C vs ±1.0°C → mode=heat. MORNING SURGE peak. T_out=-5.9°C 
+
+  ◆ hot_summer_day  [GENAI]  latency=0.87s
+    Conditions : T_in=26.0°C → setpoint 22.0°C, T_out=22.0°C  (hour 14:00)
+    Gap=4.0°C vs deadband=1.0°C → HVAC should turn ON
+    Metric                       AI / Gemini        Physics  Note
+                               ─────────────  ─────────────
+    HVAC mode                           cool        cooling  ✓ agree
+    Temp change (°C)                  -0.080         -0.050  delta=-0.030
+    HVAC power (kW)                    3.250          4.471
+    Step cost ($)                     0.0330         0.0455
+    Decision correct?                 ✓ PASS         ✓ PASS
+    AI reason  : deadband: gap=+4.00°C vs ±1.0°C → mode=cool. AFTERNOON PEAK. T_out=22.0°C (COO
+
+  ◆ hot_dry_summer  [GENAI]  latency=2.93s
+    Conditions : T_in=27.0°C → setpoint 22.0°C, T_out=21.0°C  (hour 15:00)
+    Gap=5.0°C vs deadband=1.0°C → HVAC should turn ON
+    Metric                       AI / Gemini        Physics  Note
+                               ─────────────  ─────────────
+    HVAC mode                           cool        cooling  ✓ agree
+    Temp change (°C)                  -0.080         -0.060  delta=-0.020
+    HVAC power (kW)                    3.250          3.250
+    Step cost ($)                     0.0330         0.0330
+    Decision correct?                 ✓ PASS         ✓ PASS
+    AI reason  : deadband: gap=+5.00°C vs ±1.0°C → mode=cool. AFTERNOON PEAK. T_out=21.0°C (COO
+
+  ◆ mild_spring_day  [GENAI]  latency=1.14s
+    Conditions : T_in=21.0°C → setpoint 22.0°C, T_out=17.8°C  (hour 10:00)
+    Gap=1.0°C vs deadband=1.0°C → HVAC should stay OFF
+    Metric                       AI / Gemini        Physics  Note
+                               ─────────────  ─────────────
+    HVAC mode                            off            off  ✓ agree
+    Temp change (°C)                  +0.000         +0.020  delta=-0.020
+    HVAC power (kW)                    0.000          0.000
+    Step cost ($)                     0.0000         0.0000
+    Decision correct?                 ✓ PASS         ✓ PASS
+    AI reason  : deadband: gap=-1.00°C vs ±1.0°C → mode=off. MIDDAY LULL valley. T_out=17.8°C (
+
+  ◆ rainy_fall_day  [GENAI]  latency=0.73s
+    Conditions : T_in=20.0°C → setpoint 22.0°C, T_out=9.2°C  (hour 08:00)
+    Gap=2.0°C vs deadband=1.0°C → HVAC should turn ON
+    Metric                       AI / Gemini        Physics  Note
+                               ─────────────  ─────────────
+    HVAC mode                           heat        heating  ✓ agree
+    Temp change (°C)                  +0.210         +0.190  delta=+0.020
+    HVAC power (kW)                    9.290          9.290
+    Step cost ($)                     0.1409         0.0944
+    Decision correct?                 ✓ PASS         ✓ PASS
+    AI reason  : deadband: gap=-2.00°C vs ±1.0°C → mode=heat. MORNING SURGE peak. T_out=9.2°C (
+
+  ◆ shoulder_season  [GENAI]  latency=0.88s
+    Conditions : T_in=22.0°C → setpoint 22.0°C, T_out=11.1°C  (hour 12:00)
+    Gap=0.0°C vs deadband=1.0°C → HVAC should stay OFF
+    Metric                       AI / Gemini        Physics  Note
+                               ─────────────  ─────────────
+    HVAC mode                            off            off  ✓ agree
+    Temp change (°C)                  +0.000         +0.000  delta=+0.000
+    HVAC power (kW)                    0.000          0.000
+    Step cost ($)                     0.0000         0.0000
+    Decision correct?                 ✓ PASS         ✓ PASS
+    AI reason  : deadband: gap=+0.00°C vs ±1.0°C → mode=off. standard off-peak period. T_out=11
+
+
+────────────────────────────────────────────────────────────────────────────────────
+  SECTION 3 — Test 2: generate_hvac_schedule()  (full 24-hour plan)
+────────────────────────────────────────────────────────────────────────────────────
+
+  Each schedule is validated against the RC physics energy floor —
+  the minimum kWh the house must consume to offset its heat loss.
+  'Mode agreement %' = fraction of hours where AI and physics chose the same mode.
+
+  ◆ cold_winter_day  [GENAI]  latency=4.63s  ✓ PLAUSIBLE
+    Start: T_in=18.0°C → setpoint 22.0°C
+    Metric                         AI / Gemini     Physics RC       Delta
+                                 ─────────────  ─────────────  ──────────
+    Total energy (kWh)                  66.580         66.580      +0.000
+    AI / Physics ratio                  1.000x  1.000x = match  floor: 99.69 kWh ✓
+    Total cost ($)                      7.1740         7.1740     +0.0000
+    Comfort score (%)                    100.0          100.0
+    Run cycles                               9              9
+    Pre-cond events                          2              2
+    Mode agreement (%)                    61.5    █████████████████░░░░░░░░░░░
+
+    AI sample reason : Indoor 17.9°C below setpoint 22.0°C → heating ($0.087/kWh off-peak)
+    Physics strategy : RC exact-time schedule: 9 run cycles, J=161.78, cost=$7.174, energy=66
+
+  ◆ extreme_cold  [GENAI]  latency=7.26s  ✓ PLAUSIBLE
+    Start: T_in=16.0°C → setpoint 22.0°C
+    Metric                         AI / Gemini     Physics RC       Delta
+                                 ─────────────  ─────────────  ──────────
+    Total energy (kWh)                  99.870         99.870      +0.000
+    AI / Physics ratio                  1.000x  1.000x = match  floor: 143.28 kWh ✓
+    Total cost ($)                     11.0340        11.0340     +0.0000
+    Comfort score (%)                    100.0          100.0
+    Run cycles                              11             11
+    Pre-cond events                          4              4
+    Mode agreement (%)                    76.5    █████████████████████░░░░░░░
+
+    AI sample reason : Indoor 15.8°C below setpoint 22.0°C → heating ($0.087/kWh off-peak)
+    Physics strategy : RC exact-time schedule: 11 run cycles, J=264.29, cost=$11.034, energy=
+
+  ◆ mild_winter  [GENAI]  latency=4.52s  ✓ PLAUSIBLE
+    Start: T_in=20.0°C → setpoint 22.0°C
+    Metric                         AI / Gemini     Physics RC       Delta
+                                 ─────────────  ─────────────  ──────────
+    Total energy (kWh)                  71.220         71.220      +0.000
+    AI / Physics ratio                  1.000x  1.000x = match  floor: 64.58 kWh ✓
+    Total cost ($)                      8.4070         8.4070     +0.0000
+    Comfort score (%)                    100.0          100.0
+    Run cycles                              12             12
+    Pre-cond events                          2              2
+    Mode agreement (%)                    58.8    ████████████████░░░░░░░░░░░░
+
+    AI sample reason : Indoor 19.8°C below setpoint 22.0°C → heating ($0.087/kWh off-peak)
+    Physics strategy : RC exact-time schedule: 12 run cycles, J=147.30, cost=$8.407, energy=7
+
+  ◆ hot_summer_day  [GENAI]  latency=4.52s  ✓ PLAUSIBLE
+    Start: T_in=26.0°C → setpoint 22.0°C
+    Metric                         AI / Gemini     Physics RC       Delta
+                                 ─────────────  ─────────────  ──────────
+    Total energy (kWh)                  30.870         30.870      +0.000
+    AI / Physics ratio                  1.000x  1.000x = match  floor: 0.0 kWh ✓
+    Total cost ($)                      3.8070         3.8070     +0.0000
+    Comfort score (%)                    100.0          100.0
+    Run cycles                               9              9
+    Pre-cond events                          2              2
+    Mode agreement (%)                    50.0    ██████████████░░░░░░░░░░░░░░
+
+    AI sample reason : Indoor 26.0°C above setpoint 22.0°C → cooling ($0.087/kWh off-peak)
+    Physics strategy : RC exact-time schedule: 9 run cycles, J=153.30, cost=$3.807, energy=30
+
+  ◆ hot_dry_summer  [GENAI]  latency=4.72s  ✓ PLAUSIBLE
+    Start: T_in=27.0°C → setpoint 22.0°C
+    Metric                         AI / Gemini     Physics RC       Delta
+                                 ─────────────  ─────────────  ──────────
+    Total energy (kWh)                  35.210         35.210      +0.000
+    AI / Physics ratio                  1.000x  1.000x = match  floor: 1.2 kWh ✓
+    Total cost ($)                      4.3390         4.3390     +0.0000
+    Comfort score (%)                    100.0          100.0
+    Run cycles                               7              7
+    Pre-cond events                          2              2
+    Mode agreement (%)                    60.0    ████████████████░░░░░░░░░░░░
+
+    AI sample reason : Indoor 27.0°C above setpoint 22.0°C → cooling ($0.087/kWh off-peak)
+    Physics strategy : RC exact-time schedule: 7 run cycles, J=189.15, cost=$4.339, energy=35
+
+  ◆ mild_spring_day  [GENAI]  latency=4.3s  ✓ PLAUSIBLE
+    Start: T_in=21.0°C → setpoint 22.0°C
+    Metric                         AI / Gemini     Physics RC       Delta
+                                 ─────────────  ─────────────  ──────────
+    Total energy (kWh)                  16.260         16.260      +0.000
+    AI / Physics ratio                  1.000x  1.000x = match  floor: 22.37 kWh ✓
+    Total cost ($)                      1.6040         1.6040     +0.0000
+    Comfort score (%)                    100.0          100.0
+    Run cycles                               3              3
+    Pre-cond events                          0              0
+    Mode agreement (%)                    80.0    ██████████████████████░░░░░░
+
+    AI sample reason : Indoor 20.9°C below setpoint 22.0°C → heating ($0.087/kWh off-peak)
+    Physics strategy : RC exact-time schedule: 3 run cycles, J=63.17, cost=$1.604, energy=16.
+
+  ◆ rainy_fall_day  [GENAI]  latency=4.11s  ✓ PLAUSIBLE
+    Start: T_in=20.0°C → setpoint 22.0°C
+    Metric                         AI / Gemini     Physics RC       Delta
+                                 ─────────────  ─────────────  ──────────
+    Total energy (kWh)                  40.260         40.260      +0.000
+    AI / Physics ratio                  1.000x  1.000x = match  floor: 33.71 kWh ✓
+    Total cost ($)                      4.6560         4.6560     +0.0000
+    Comfort score (%)                    100.0          100.0
+    Run cycles                               7              7
+    Pre-cond events                          1              1
+    Mode agreement (%)                    72.7    ████████████████████░░░░░░░░
+
+    AI sample reason : Indoor 19.9°C below setpoint 22.0°C → heating ($0.087/kWh off-peak)
+    Physics strategy : RC exact-time schedule: 7 run cycles, J=110.05, cost=$4.656, energy=40
+
+  ◆ shoulder_season  [GENAI]  latency=5.38s  ✓ PLAUSIBLE
+    Start: T_in=22.0°C → setpoint 22.0°C
+    Metric                         AI / Gemini     Physics RC       Delta
+                                 ─────────────  ─────────────  ──────────
+    Total energy (kWh)                  21.680         21.680      +0.000
+    AI / Physics ratio                  1.000x  1.000x = match  floor: 27.49 kWh ✓
+    Total cost ($)                      2.2150         2.2150     +0.0000
+    Comfort score (%)                    100.0          100.0
+    Run cycles                               4              4
+    Pre-cond events                          1              1
+    Mode agreement (%)                    66.7    ██████████████████░░░░░░░░░░
+
+    AI sample reason : Indoor 21.3°C below setpoint 22.0°C → heating ($0.087/kWh off-peak)
+    Physics strategy : RC exact-time schedule: 4 run cycles, J=71.93, cost=$2.215, energy=21.
+
+  ── Energy plausibility summary ──────────────────────────────────────────
+
+  Scenario                     AI kWh   Phys kWh  Floor kWh    Ratio         Status
+  ──────────────────────────────────────────────────────────────────────────────────
+  cold_winter_day               66.58      66.58      99.69    1.000x           ✓ ok
+  extreme_cold                  99.87      99.87     143.28    1.000x           ✓ ok
+  mild_winter                   71.22      71.22      64.58    1.000x           ✓ ok
+  hot_summer_day                30.87      30.87       0.00    1.000x           ✓ ok
+  hot_dry_summer                35.21      35.21       1.20    1.000x           ✓ ok
+  mild_spring_day               16.26      16.26      22.37    1.000x           ✓ ok
+  rainy_fall_day                40.26      40.26      33.71    1.000x           ✓ ok
+  shoulder_season               21.68      21.68      27.49    1.000x           ✓ ok
+
+  Physically plausible: 8/8
+
+────────────────────────────────────────────────────────────────────────────────────
+  SECTION 4 — Test 3: optimize_setpoint_ai()  (smart thermostat setpoint)
+────────────────────────────────────────────────────────────────────────────────────
+
+  AI chooses a setpoint that minimises electricity cost while keeping
+  T_in within the user's ±2°C comfort band.  Both engines receive the
+  same TOU pricing context (scenario hour, not real clock).
+
+  ◆ cold_winter_day  [GENAI]  latency=1.23s
+    T_in=18.0°C, comfort=22.0°C ±2.0°C, T_out=-18.0°C  (hour 03:00, TOU=0.087/kWh)
+    Metric                           AI / Gemini        Physics     Delta
+                                   ─────────────  ─────────────  ────────
+    Setpoint (°C)                           23.8           22.0     +1.80  ✓ In band
+    Drift from comfort (°C)                  1.8            0.0
+    Pre-conditioning?                       True          False  ✗ differ
+    Expected saving (%)                     15.0            0.0
+    Comfort impact                        slight
+
+    AI strategy  : Current time (03:00) is within the deep-night valley (02:00-04:00) which is th
+    Phys strategy: ☑️ Off-peak ($0.087/kWh), no peak imminent — holding your comfort 22.0°C.
+
+  ◆ extreme_cold  [GENAI]  latency=1.96s
+    T_in=16.0°C, comfort=22.0°C ±2.0°C, T_out=-26.0°C  (hour 05:00, TOU=0.087/kWh)
+    Metric                           AI / Gemini        Physics     Delta
+                                   ─────────────  ─────────────  ────────
+    Setpoint (°C)                           23.8           23.6     +0.20  ✓ In band
+    Drift from comfort (°C)                  1.8            1.6
+    Pre-conditioning?                       True           True  ✓ agree
+    Expected saving (%)                     15.0           15.0
+    Comfort impact                        slight
+
+    AI strategy  : Rule 1 (Pre-Conditioning) - Winter: Current outdoor temperature is -26.0°C, wh
+    Phys strategy: 🔥 Pre-heating to 23.6°C off-peak ($0.087/kWh) ahead of $0.182/kWh peak. [Your 
+
+  ◆ mild_winter  [GENAI]  latency=1.45s
+    T_in=20.0°C, comfort=22.0°C ±2.0°C, T_out=-5.9°C  (hour 06:00, TOU=0.087/kWh)
+    Metric                           AI / Gemini        Physics     Delta
+                                   ─────────────  ─────────────  ────────
+    Setpoint (°C)                           22.0           23.6     -1.60  ✓ In band
+    Drift from comfort (°C)                  0.0            1.6
+    Pre-conditioning?                      False           True  ✗ differ
+    Expected saving (%)                      0.0           15.0
+    Comfort impact                          none
+
+    AI strategy  : Current hour is 06:00, which is the start of the 'MORNING SURGE' (0.40-0.43 kW
+    Phys strategy: 🔥 Pre-heating to 23.6°C off-peak ($0.087/kWh) ahead of $0.182/kWh peak. [Your 
+
+  ◆ hot_summer_day  [GENAI]  latency=1.9s
+    T_in=26.0°C, comfort=22.0°C ±2.0°C, T_out=22.0°C  (hour 14:00, TOU=0.122/kWh)
+    Metric                           AI / Gemini        Physics     Delta
+                                   ─────────────  ─────────────  ────────
+    Setpoint (°C)                           21.5           22.0     -0.50  ✓ In band
+    Drift from comfort (°C)                 -0.5            0.0
+    Pre-conditioning?                      False          False  ✓ agree
+    Expected saving (%)                      0.0            0.0
+    Comfort impact                        slight
+
+    AI strategy  : Current indoor humidity (78%) exceeds the 70% threshold, triggering Rule 4. To
+    Phys strategy: ⚖️ Mid-peak ($0.122/kWh) — holding your comfort 22.0°C. [With your central sys
+
+  ◆ hot_dry_summer  [GENAI]  latency=1.52s
+    T_in=27.0°C, comfort=22.0°C ±2.0°C, T_out=21.0°C  (hour 15:00, TOU=0.122/kWh)
+    Metric                           AI / Gemini        Physics     Delta
+                                   ─────────────  ─────────────  ────────
+    Setpoint (°C)                           22.0           22.0     +0.00  ✓ In band
+    Drift from comfort (°C)                  0.0            0.0
+    Pre-conditioning?                      False          False  ✓ agree
+    Expected saving (%)                      0.0            0.0
+    Comfort impact                        slight
+
+    AI strategy  : Current time is 15:00, which is the start of the afternoon peak (13:00-16:00) 
+    Phys strategy: ⚖️ Mid-peak ($0.122/kWh) — holding your comfort 22.0°C. [With your central sys
+
+  ◆ mild_spring_day  [GENAI]  latency=0.95s
+    T_in=21.0°C, comfort=22.0°C ±2.0°C, T_out=17.8°C  (hour 10:00, TOU=0.182/kWh)
+    Metric                           AI / Gemini        Physics     Delta
+                                   ─────────────  ─────────────  ────────
+    Setpoint (°C)                           22.0           20.3     +1.70  ✓ In band
+    Drift from comfort (°C)                  0.0           -1.7
+    Pre-conditioning?                      False          False  ✓ agree
+    Expected saving (%)                      0.0            0.0
+    Comfort impact                          none
+
+    AI strategy  : Current outdoor temperature (8.0°C) falls within the mild weather range (5°C ≤
+    Phys strategy: 🧠 On-peak ($0.182/kWh) — relaxing to 20.3°C, coasting on thermal mass. [Your 1
+
+  ◆ rainy_fall_day  [GENAI]  latency=2.65s
+    T_in=20.0°C, comfort=22.0°C ±2.0°C, T_out=9.2°C  (hour 08:00, TOU=0.182/kWh)
+    Metric                           AI / Gemini        Physics     Delta
+                                   ─────────────  ─────────────  ────────
+    Setpoint (°C)                           21.5           20.3     +1.20  ✓ In band
+    Drift from comfort (°C)                 -0.5           -1.7
+    Pre-conditioning?                      False          False  ✓ agree
+    Expected saving (%)                      0.0            0.0
+    Comfort impact                        slight
+
+    AI strategy  : Humidity Override: Current RH is 88%, exceeding the 70% threshold. To reduce l
+    Phys strategy: 🧠 On-peak ($0.182/kWh) — relaxing to 20.3°C, coasting on thermal mass. [Your 1
+
+  ◆ shoulder_season  [GENAI]  latency=1.85s
+    T_in=22.0°C, comfort=22.0°C ±2.0°C, T_out=11.1°C  (hour 12:00, TOU=0.122/kWh)
+    Metric                           AI / Gemini        Physics     Delta
+                                   ─────────────  ─────────────  ────────
+    Setpoint (°C)                           22.0           22.0     +0.00  ✓ In band
+    Drift from comfort (°C)                  0.0            0.0
+    Pre-conditioning?                      False          False  ✓ agree
+    Expected saving (%)                      0.0            0.0
+    Comfort impact                          none
+
+    AI strategy  : Current outdoor temperature (6.0°C) falls within the mild weather range (5°C ≤
+    Phys strategy: ⚖️ Mid-peak ($0.122/kWh) — holding your comfort 22.0°C. [With your central sys
+
+  Setpoint band violations: 0/8  (All within ±2°C ✓)
+
+────────────────────────────────────────────────────────────────────────────────────
+  SECTION 5 — Overall Summary
+────────────────────────────────────────────────────────────────────────────────────
+
+  Function                         AI score                   Physics score       
+  ──────────────────────────────────────────────────────────────────────────────────
+  simulate_step_with_hvac()        8/8 correct (100%)      8/8 correct (100%)
+  generate_hvac_schedule()         8/8 plausible schedules     8/8 plausible schedules
+  optimize_setpoint_ai()           8/8 within comfort band    8/8 within comfort band
+
+  Total API calls made    : 24
+  Gemini answered         : 24 / 24
+  Avg latency — all calls : 2.6 s
+  Avg latency — step      : 1.18 s  (physics = <0.01 s)
+  Avg latency — schedule  : 4.93 s  (physics = <0.01 s)
+  Avg latency — setpoint  : 1.69 s  (physics = <0.01 s)
+
+  Step decisions  : ✓ AI matches physics on on/off decisions
+  Schedules       : ✓ All schedules are physically plausible
+  Setpoints       : ✓ All setpoints within ±2°C comfort band
+
+====================================================================================
+  Gemini live: YES   Calls: 24   Gemini answered: 24   Avg latency: 2.6s
+====================================================================================

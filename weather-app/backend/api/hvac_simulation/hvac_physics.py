@@ -663,13 +663,15 @@ def _build_step_prompt(
     t_target: float,
     weather_data: Dict[str, Any],
     hvac_schedule: Optional[Dict] = None,
+    sim_hour: Optional[int] = None,      # FIX BUG-4: pass sim hour instead of real clock
 ) -> str:
-    # ── ★ ENHANCED: step prompt embeds empirical thresholds so the AI can
-    #    immediately classify the current hour against known load patterns ──
-    w = _parse_weather(weather_data)
+    w   = _parse_weather(weather_data)
     geo = _house_geometry(house_data)
     ins = _insulation_params(house_data)
-    h   = datetime.now().hour
+
+    # FIX BUG-4: use simulation hour when provided; real clock only for live app
+    h    = sim_hour if sim_hour is not None else datetime.now().hour
+    mins = 0       if sim_hour is not None else datetime.now().minute
     rate = get_electricity_price(h)
 
     scheduled_mode = "off"
@@ -679,7 +681,6 @@ def _build_step_prompt(
                 scheduled_mode = a.get("mode", "off")
                 break
 
-    # Empirical load context for this specific hour
     empirical_load_map = {
         range(2, 5):   ("LOWEST-DEMAND deep-night valley", "0.15–0.22 kW",  "ideal pre-conditioning window"),
         range(5, 9):   ("MORNING SURGE peak",              "0.40–0.43 kW",  "avoid adding HVAC load if possible"),
@@ -694,7 +695,6 @@ def _build_step_prompt(
             break
     load_label, load_range, load_advice = hour_context
 
-    # Furnace threshold classification
     if w["t_out"] < -5:
         hvac_intensity = "AGGRESSIVE heating demand expected (empirical avg 0.20–0.26 kW FurnaceHRV)"
     elif w["t_out"] < 0:
@@ -708,9 +708,55 @@ def _build_step_prompt(
     else:
         hvac_intensity = "COOLING season demand expected (empirical avg 0.19–0.23 kW FurnaceHRV)"
 
+    # FIX BUG-3: humidity is stored as raw % (e.g. 65.0), not a fraction (0.65).
+    # Was: > 0.70 (always True) and :.0% (shows 6500%). Now: > 70 and :.0f%
     humidity_note = ""
-    if w["humidity"] > 0.70:
-        humidity_note = f"\n- ⚠ High humidity ({w['humidity']:.0%}) → +12% latent load expected (empirical). Prioritise dehumidification."
+    if w["humidity"] > 70:
+        humidity_note = (
+            f"\n- ⚠ High humidity ({w['humidity']:.0f}%) → +12% latent load expected "
+            f"(empirical). Prioritise dehumidification."
+        )
+
+    # FIX BUG-1 + BUG-2: pre-compute the required mode from the deadband rule.
+    # The old template hardcoded hvac_mode="off" and new_temp_c=T_in, causing Gemini
+    # to copy those defaults. The old IMPORTANT instruction biased Gemini toward "off"
+    # even when T_in was far outside the deadband. Now we compute the correct mode and
+    # physics ΔT up front and embed them directly in the template as the expected answer.
+    deadband   = float(house_data.get("deadband_c", 1.0))
+    gap        = round(t_in - t_target, 2)
+    cap_heat   = _hvac_capacity(house_data, "heating")
+    cap_cool   = _hvac_capacity(house_data, "cooling")
+    cop_val    = _cop(w["t_out"], float(house_data.get("cop_base", 3.5)))
+    c_home     = _thermal_mass(geo["floor_area_m2"])
+
+    if t_in < t_target - deadband:
+        mode_directive = "heat"
+        required_label = (
+            f"HEAT  — T_in={t_in:.1f}°C is {abs(gap):.2f}°C BELOW setpoint {t_target:.1f}°C "
+            f"(gap > deadband ±{deadband}°C)"
+        )
+        cap_active  = cap_heat
+        physics_dt  = round((cap_active * 1000.0 * cop_val * DT_STEP) / c_home, 3)
+    elif t_in > t_target + deadband:
+        mode_directive = "cool"
+        required_label = (
+            f"COOL  — T_in={t_in:.1f}°C is {abs(gap):.2f}°C ABOVE setpoint {t_target:.1f}°C "
+            f"(gap > deadband ±{deadband}°C)"
+        )
+        cap_active  = cap_cool
+        physics_dt  = round(-(cap_active * 1000.0 * cop_val * DT_STEP) / c_home, 3)
+    else:
+        mode_directive = "off"
+        required_label = (
+            f"OFF   — T_in={t_in:.1f}°C is within deadband ±{deadband}°C of setpoint "
+            f"{t_target:.1f}°C (gap={gap:+.2f}°C)"
+        )
+        cap_active  = 0.0
+        physics_dt  = 0.0
+
+    expected_new_t  = round(t_in + physics_dt, 2)
+    step_energy     = round(cap_active * (DT_STEP / DT_HOUR), 4)
+    step_cost       = round(step_energy * rate, 4)
 
     return f"""{_PHYSICS_CONTEXT}
 
@@ -719,11 +765,11 @@ def _build_step_prompt(
 - Envelope: {geo['envelope_m2']:.0f} m²  Windows: {geo['window_m2']:.0f} m²
 - Insulation: {house_data.get('insulation_quality','average')}  U={ins['u_value']} W/m²K
 - HVAC: {house_data.get('hvac_type','central')}
-- Heating cap: {_hvac_capacity(house_data,'heating')} kW  Cooling cap: {_hvac_capacity(house_data,'cooling')} kW
+- Heating cap: {cap_heat} kW  Cooling cap: {cap_cool} kW
 
-## Current Conditions ({h:02d}:{datetime.now().minute:02d})
+## Current Conditions ({h:02d}:{mins:02d})
 - T_in={t_in:.1f}°C  T_target={t_target:.1f}°C  T_out={w['t_out']}°C
-- Humidity={w['humidity']:.0%}  Wind={w['wind_ms']} m/s  Solar={w['radiation']} W/m²
+- Humidity={w['humidity']:.0f}%  Wind={w['wind_ms']} m/s  Solar={w['radiation']} W/m²
 - Precip={w['precip']} mm  Snow={w['snow_depth']} m
 - Scheduled mode: {scheduled_mode}  Rate: ${rate}/kWh{humidity_note}
 
@@ -732,25 +778,26 @@ def _build_step_prompt(
 - Advice: {load_advice}.
 - T_out={w['t_out']:.1f}°C → {hvac_intensity}
 
-## Deadband control
-- Turn on  if |T_in − T_target| > {house_data.get('deadband_c',1.0)}°C
-- Turn off if |T_in − T_target| < 0.3°C (overshoot prevention)
-- Max ΔT in 5 min: ±0.5°C
-- IMPORTANT: Cross-check your mode decision against the empirical HVAC thresholds
-  above. If T_out is in the "minimal HVAC demand" zone AND T_in is within deadband,
-  prefer "off" over running HVAC — historical data confirms low HVAC need at these
-  temperatures.
+## Deadband Analysis — MANDATORY: your hvac_mode MUST match this result
+- Rule: turn ON if |T_in − T_target| > ±{deadband}°C; turn OFF if |gap| < 0.3°C
+- Current gap: T_in − T_target = {gap:+.2f}°C  (deadband = ±{deadband}°C)
+- ▶ REQUIRED MODE: {required_label}
+- Physics ΔT this step with mode={mode_directive}: {physics_dt:+.3f}°C
+  (RC model: COP={cop_val:.2f}, cap={cap_active:.2f} kW, C_home={c_home/1e6:.1f} MJ/°C)
 
-## Output (JSON only):
+## Output — JSON only, no other text.
+Fill in the values below. The physics estimates are provided — refine them if your
+analysis of the full heat-balance (solar, wind, conduction) justifies a different ΔT,
+but hvac_mode MUST match the REQUIRED MODE above.
 {{
-  "new_temp_c": {round(t_in,1)},
-  "hvac_mode": "off",
-  "hvac_power_kw": 0.0,
-  "hvac_energy_kwh": 0.0,
+  "new_temp_c": {expected_new_t},
+  "hvac_mode": "{mode_directive}",
+  "hvac_power_kw": {cap_active},
+  "hvac_energy_kwh": {step_energy},
   "electricity_rate": {rate},
-  "cost_this_step": 0.0,
-  "should_run_hvac": false,
-  "reason": "explanation referencing empirical load pattern and current conditions"
+  "cost_this_step": {step_cost},
+  "should_run_hvac": {str(mode_directive != "off").lower()},
+  "reason": "deadband: gap={gap:+.2f}°C vs ±{deadband}°C → mode={mode_directive}. {load_label}. T_out={w['t_out']:.1f}°C ({hvac_intensity[:50]})"
 }}"""
 
 
@@ -759,12 +806,13 @@ def _build_schedule_prompt(
     weather_rows: List[Dict],
     t_in: float,
     t_target: float,
+    sim_hour: Optional[int] = None,      # FIX BUG-4: use sim hour, not real clock
 ) -> str:
-    # ── ★ ENHANCED: schedule prompt gives the AI the full empirical playbook
-    #    so it can generate a cost-optimal schedule anchored to real patterns ──
-    h   = datetime.now().hour
-    geo = _house_geometry(house_data)
-    ins = _insulation_params(house_data)
+    # FIX BUG-4: use simulation hour when provided; real clock only for live app
+    h    = sim_hour if sim_hour is not None else datetime.now().hour
+    mins = 0       if sim_hour is not None else datetime.now().minute
+    geo  = _house_geometry(house_data)
+    ins  = _insulation_params(house_data)
 
     lines = []
     for i in range(24):
@@ -857,7 +905,7 @@ def _build_schedule_prompt(
 {{
   "actions": [
     {{"hour":{h},"mode":"heat|cool|pre-heat|pre-cool|off",
-      "start_time":"{h:02d}:{datetime.now().minute:02d}",
+      "start_time":"{h:02d}:{mins:02d}",
       "end_time":"HH:MM",
       "power_kw":0.0,"cost":0.0,
       "reason":"reference empirical pattern + why HVAC turns on/off at this exact time",
@@ -1181,12 +1229,14 @@ def optimize_setpoint_ai(
     weather_rows:  List[Dict],
     comfort_c:     float = 22.0,
     comfort_tol:   float = 2.0,
+    sim_hour:      Optional[int] = None,   # FIX BUG-4: use sim hour for TOU context
 ) -> Dict[str, Any]:
     comfort_c   = max(15.0, min(30.0, float(comfort_c)))
     comfort_tol = max(0.5,  min(4.0,  float(comfort_tol)))
     t_in        = max(5.0,  min(40.0, float(t_in)))
 
-    current_hour = datetime.now().hour
+    # FIX BUG-4: use simulation hour when provided; real clock for live app
+    current_hour = sim_hour if sim_hour is not None else datetime.now().hour
 
     band_min = round(comfort_c - comfort_tol, 1)
     band_max = round(comfort_c + comfort_tol, 1)
@@ -1240,6 +1290,54 @@ def optimize_setpoint_ai(
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  SECTION 5c — Physics Energy Floor (BUG-5 helper)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _compute_physics_energy_floor(
+    house_data:   Dict[str, Any],
+    weather_rows: List[Dict],
+    t_setpoint:   float = 22.0,
+) -> float:
+    """
+    Compute the minimum physically plausible electricity consumption over 24 h.
+
+    Methodology: sum the hourly heat loss through walls + infiltration at the
+    given outdoor temps, divide by average COP.  This is the absolute minimum
+    the HVAC must consume just to maintain the setpoint — any AI schedule
+    claiming less than 20% of this floor on a cold day is hallucinated.
+
+    Returns 0.0 for warm days (no heating required).
+    """
+    geo = _house_geometry(house_data)
+    ins = _insulation_params(house_data)
+    cop_base = float(house_data.get("cop_base", 3.5))
+
+    total_loss_kw = 0.0
+    t_out_sum     = 0.0
+    n_cold_hours  = 0
+
+    for row in weather_rows[:24]:
+        w     = _parse_weather(row)
+        t_out = w["t_out"]
+        t_out_sum += t_out
+        if t_out >= t_setpoint:
+            continue                          # no heating loss this hour
+        q_walls = abs(_q_conductive(ins["u_value"], geo["envelope_m2"], t_out, t_setpoint))
+        q_infil = abs(_q_wind(geo["volume_m3"], ins["ach_base"], 0.02,
+                              w["wind_ms"], t_out, t_setpoint))
+        total_loss_kw += (q_walls + q_infil) / 1000.0
+        n_cold_hours  += 1
+
+    if n_cold_hours == 0:
+        return 0.0
+
+    avg_t_out = t_out_sum / 24
+    cop       = max(1.0, _cop(avg_t_out, cop_base))
+    # total_loss_kw is summed over n_cold_hours; ÷ cop gives electricity kWh
+    return max(0.0, total_loss_kw / cop)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  SECTION 6 — Data Classes
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -1286,6 +1384,7 @@ def simulate_step_with_hvac(
     hvac_schedule:        Optional[Dict] = None,
     personal_comfort:     Optional[float] = None,
     dt_s:                 float = DT_STEP,
+    sim_hour:             Optional[int] = None,   # FIX BUG-4: pass to prompt builder
 ) -> Dict[str, Any]:
     if target_temp_c is None:
         target_temp_c = house_data.get("personal_comfort", 22.0)
@@ -1296,19 +1395,39 @@ def simulate_step_with_hvac(
     t_target = max(15.0, min(30.0, float(target_temp_c)))
 
     if dt_s >= 30:
-        prompt = _build_step_prompt(house_data, t_in, t_target, weather_data, hvac_schedule)
+        # FIX BUG-4: pass sim_hour so the prompt uses the right TOU / load context
+        prompt = _build_step_prompt(
+            house_data, t_in, t_target, weather_data, hvac_schedule,
+            sim_hour=sim_hour,
+        )
         result = _call_genai(prompt)
 
         if result is not None:
-            new_t = float(result.get("new_temp_c", t_in))
+            new_t     = float(result.get("new_temp_c", t_in))
             raw_delta = new_t - t_in
-            scaled_delta = raw_delta * (dt_s / DT_STEP)
-            max_delta = 0.5 * (dt_s / DT_STEP)
-            scaled_delta = max(-max_delta, min(max_delta, scaled_delta))
-            new_t = max(5.0, min(40.0, t_in + scaled_delta))
-            result["new_temp_c"] = round(new_t, 2)
-            result.setdefault("engine", "genai")
-            return result
+
+            # FIX BUG-1 safety net: if Gemini returned mode=off AND ΔT≈0 while the
+            # gap clearly exceeds the deadband, it copied the old template default.
+            # Fall through to the physics engine instead of returning a wrong answer.
+            deadband      = float(house_data.get("deadband_c", 1.0))
+            gap           = abs(t_in - t_target)
+            returned_mode = result.get("hvac_mode", "off")
+            template_copy = (abs(raw_delta) < 0.001 and returned_mode == "off"
+                             and gap > deadband)
+            if template_copy:
+                print(
+                    f"[GenAI] Step result rejected — looks like a template copy "
+                    f"(mode=off, ΔT=0 but gap={gap:.2f}°C > deadband={deadband}°C). "
+                    f"Falling back to RC physics."
+                )
+            else:
+                scaled_delta = raw_delta * (dt_s / DT_STEP)
+                max_delta    = 0.5 * (dt_s / DT_STEP)
+                scaled_delta = max(-max_delta, min(max_delta, scaled_delta))
+                new_t        = max(5.0, min(40.0, t_in + scaled_delta))
+                result["new_temp_c"] = round(new_t, 2)
+                result.setdefault("engine", "genai")
+                return result
 
     return _physics_step(
         house_data   = house_data,
@@ -1325,52 +1444,69 @@ def generate_hvac_schedule(
     current_indoor_temp_c: float,
     personal_comfort:     Optional[float] = None,
     target_temp_c:        Optional[float] = None,
+    sim_hour:             Optional[int] = None,   # FIX BUG-4: pass to prompt builder
 ) -> HVACSchedule:
     if target_temp_c is None:
         target_temp_c = house_data.get("personal_comfort", 22.0)
     if personal_comfort is None:
         personal_comfort = house_data.get("personal_comfort", 22.0)
 
-    t_target = max(15.0, min(30.0, float(target_temp_c)))
-    t_in     = max(5.0,  min(40.0, float(current_indoor_temp_c)))
-    current_hour = datetime.now().hour
+    t_target     = max(15.0, min(30.0, float(target_temp_c)))
+    t_in         = max(5.0,  min(40.0, float(current_indoor_temp_c)))
+    current_hour = sim_hour if sim_hour is not None else datetime.now().hour
 
-    prompt = _build_schedule_prompt(house_data, weather_rows, t_in, t_target)
+    # FIX BUG-4: pass sim_hour to prompt builder
+    prompt = _build_schedule_prompt(house_data, weather_rows, t_in, t_target,
+                                    sim_hour=sim_hour)
     result = _call_genai(prompt)
 
     if result is not None and "actions" in result and len(result["actions"]) >= 12:
-        actions = []
-        for a in result["actions"]:
-            actions.append(HVACAction(
-                hour             = int(a.get("hour", 0)),
-                mode             = a.get("mode", "off"),
-                start_time       = a.get("start_time", "00:00"),
-                end_time         = a.get("end_time",   "01:00"),
-                power_kw         = float(a.get("power_kw", 0)),
-                cost             = float(a.get("cost", 0)),
-                reason           = a.get("reason", ""),
-                predicted_temp_c = float(a.get("predicted_temp_c", t_target)),
-                target_temp_c    = t_target,
-            ))
-        while len(actions) < 24:
-            h = (current_hour + len(actions)) % 24
-            actions.append(HVACAction(
-                hour=h, mode="off",
-                start_time=f"{h:02d}:00", end_time=f"{(h+1)%24:02d}:00",
-                power_kw=0.0, cost=0.0, reason="No action scheduled",
-                predicted_temp_c=t_target, target_temp_c=t_target,
-            ))
-        return HVACSchedule(
-            actions          = actions[:24],
-            total_cost       = round(float(result.get("total_cost", 0)), 3),
-            total_energy_kwh = round(float(result.get("total_energy_kwh", 0)), 2),
-            comfort_score    = float(result.get("comfort_score", 85)),
-            generated_at     = datetime.now().isoformat(),
-        )
+        # FIX BUG-5: validate energy is physically plausible before trusting the schedule.
+        # Compute the minimum electricity the house MUST consume to offset heat loss.
+        # If Gemini claims less than 20% of that floor it is hallucinating.
+        ai_kwh        = float(result.get("total_energy_kwh", 0))
+        physics_floor = _compute_physics_energy_floor(house_data, weather_rows, t_target)
+        schedule_plausible = not (physics_floor > 2.0 and ai_kwh < physics_floor * 0.20)
+
+        if not schedule_plausible:
+            print(
+                f"[GenAI] Schedule rejected — claimed {ai_kwh:.2f} kWh but physics "
+                f"floor is {physics_floor:.1f} kWh (AI < 20% of minimum). "
+                f"Falling back to RC physics schedule."
+            )
+        else:
+            actions = []
+            for a in result["actions"]:
+                actions.append(HVACAction(
+                    hour             = int(a.get("hour", 0)),
+                    mode             = a.get("mode", "off"),
+                    start_time       = a.get("start_time", "00:00"),
+                    end_time         = a.get("end_time",   "01:00"),
+                    power_kw         = float(a.get("power_kw", 0)),
+                    cost             = float(a.get("cost", 0)),
+                    reason           = a.get("reason", ""),
+                    predicted_temp_c = float(a.get("predicted_temp_c", t_target)),
+                    target_temp_c    = t_target,
+                ))
+            while len(actions) < 24:
+                h = (current_hour + len(actions)) % 24
+                actions.append(HVACAction(
+                    hour=h, mode="off",
+                    start_time=f"{h:02d}:00", end_time=f"{(h+1)%24:02d}:00",
+                    power_kw=0.0, cost=0.0, reason="No action scheduled",
+                    predicted_temp_c=t_target, target_temp_c=t_target,
+                ))
+            return HVACSchedule(
+                actions          = actions[:24],
+                total_cost       = round(float(result.get("total_cost", 0)), 3),
+                total_energy_kwh = round(float(result.get("total_energy_kwh", 0)), 2),
+                comfort_score    = float(result.get("comfort_score", 85)),
+                generated_at     = datetime.now().isoformat(),
+            )
 
     sched_dict = _physics_schedule(
         house_data, weather_rows, t_in, t_target,
-        current_hour, datetime.now().minute
+        current_hour, datetime.now().minute if sim_hour is None else 0
     )
     _action_fields = {f.name for f in HVACAction.__dataclass_fields__.values()}
     actions = [
