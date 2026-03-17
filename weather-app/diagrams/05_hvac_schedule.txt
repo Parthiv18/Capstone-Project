@@ -1,0 +1,35 @@
+title 5. HVAC Schedule Generation — GET /api/hvac/{username}
+
+participant Frontend
+participant FastAPI
+participant SQLite
+participant Gemini
+participant RC Physics
+
+Frontend->FastAPI: GET /api/hvac/{username}?target_temp=22
+FastAPI->SQLite: get_user_state(username)
+SQLite-->FastAPI: {house, weather, simulated_temp, hvac_sim}
+
+FastAPI->FastAPI: Schedule stale?\n- Missing, OR\n- generated_at > 1 hr ago, OR\n- all non-off actions already past
+
+alt Schedule still fresh
+    FastAPI-->Frontend: 200 (cached schedule)
+end
+
+FastAPI->Gemini: POST 24h schedule prompt\n{weather table with TOU tags\n↑SURGE/↑PEAK/↓VALLEY per hour,\npre-conditioning windows,\nheating/cooling capacity, T_in, T_set}
+
+alt Gemini returns ≥12 actions
+    Gemini-->FastAPI: {actions:[run cycles],\ntotal_cost, total_energy_kwh,\ncomfort_score}
+    FastAPI->FastAPI: Energy floor check:\nphysics_floor = RC heat loss / COP\nif ai_kwh < floor × 0.20 → reject
+end
+
+alt Gemini unavailable / floor check fails
+    FastAPI->RC Physics: _physics_schedule(house, weather,\nT_in, T_set, hour=0)
+    RC Physics->RC Physics: 288 steps × 5 min\nHeuristic: Cool/Heat/Pre-cool/Pre-heat/Off\nMinimise J = Σ(P×Price + λ×|T_in−T_set|)\nEnforce min ON=30min, min OFF=20min
+    RC Physics-->FastAPI: {actions, total_cost,\ntotal_energy_kwh, comfort_score, J}
+end
+
+FastAPI->SQLite: UPDATE user_thermostat\nSET hvac_sim = JSON(schedule)
+SQLite-->FastAPI: OK
+
+FastAPI-->Frontend: 200 {actions, total_cost,\ntotal_energy_kwh, comfort_score, engine}

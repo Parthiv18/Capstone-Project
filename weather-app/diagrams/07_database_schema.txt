@@ -1,0 +1,23 @@
+title 7. Database Schema — Tables & Key Operations
+
+participant App Code
+participant users
+participant user_thermostat
+
+note over users: id INTEGER PK AUTOINCREMENT\nusername TEXT UNIQUE NOT NULL\npassword_hash TEXT NOT NULL\nsalt TEXT NOT NULL\naddress TEXT\nuser_weather TEXT  ← JSON snapshot array\nuser_house TEXT    ← JSON {data, appliances}\nweather_date TEXT  ← ISO date of last fetch
+
+note over user_thermostat: user_id INTEGER PK\n  → FOREIGN KEY users.id\nsim_inside_temp REAL NOT NULL\nhvac_sim TEXT         ← JSON schedule\ntarget_setpoint REAL\nappliance_alerts TEXT ← JSON + TTL fields\nlast_updated TEXT     ← CURRENT_TIMESTAMP
+
+App Code->users: create_user()\nINSERT (username, hash, salt, address)
+App Code->users: verify_user()\nSELECT hash+salt → PBKDF2 compare_digest
+App Code->users: set_user_weather()\nUPDATE user_weather = JSON(snapshot_array)\nweather_date = today
+App Code->users: set_user_house()\nUPDATE user_house = JSON({data, appliances})
+
+App Code->user_thermostat: update_simulated_temp()\nINSERT ... ON CONFLICT DO UPDATE\nsim_inside_temp, last_updated
+App Code->user_thermostat: set_hvac_sim()\nUPDATE hvac_sim = JSON(schedule)
+App Code->user_thermostat: set_target_setpoint()\nUPDATE or INSERT target_setpoint
+App Code->user_thermostat: set_appliance_alerts()\nUPDATE appliance_alerts = JSON(result)
+
+App Code->users: get_user_state()\nSELECT all user fields
+App Code->user_thermostat: + SELECT all thermostat fields
+user_thermostat-->App Code: composite state dict\nused by every simulation endpoint

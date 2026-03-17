@@ -1,0 +1,30 @@
+title 2. User Login + Daily Weather Refresh
+
+participant Frontend
+participant FastAPI
+participant SQLite
+participant Geoapify
+participant Open-Meteo
+
+Frontend->FastAPI: POST /login {username, password}
+FastAPI->SQLite: SELECT password_hash, salt\nFROM users WHERE username = ?
+SQLite-->FastAPI: {hash, salt}
+FastAPI->FastAPI: PBKDF2 recompute\nsecrets.compare_digest()
+
+note over FastAPI: On mismatch → 401
+
+FastAPI->SQLite: SELECT weather_date, address\nFROM users WHERE username = ?
+SQLite-->FastAPI: {last_date, address}
+
+FastAPI->FastAPI: last_date == today?\n(America/Toronto)
+
+alt Weather stale (different day)
+    FastAPI->Geoapify: GET /geocode?text={address}
+    Geoapify-->FastAPI: {lat, lon}
+    FastAPI->Open-Meteo: GET /forecast?lat&lon\n&hourly=temp,humidity,solar,\nwind,precip,snowfall
+    Open-Meteo-->FastAPI: 7-day hourly JSON
+    FastAPI->SQLite: UPDATE users SET\nuser_weather = snapshot,\nweather_date = today
+end
+
+FastAPI-->Frontend: 200 {ok:true, username, address}
+Frontend->Frontend: Store username in localStorage

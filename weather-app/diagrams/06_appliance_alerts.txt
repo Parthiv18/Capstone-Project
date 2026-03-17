@@ -1,0 +1,30 @@
+title 6. Appliance Alerts — GET /api/alerts/{username}
+
+participant Frontend
+participant FastAPI
+participant SQLite
+participant Gemini
+
+Frontend->FastAPI: GET /api/alerts/{username}\n(?force=true to bypass cache)
+
+FastAPI->SQLite: get_user_state(username)\n→ {house, weather, hvac_sim,\n   appliance_alerts (cached)}
+SQLite-->FastAPI: state
+
+FastAPI->FastAPI: Cache check:\nnormal → fresh if < 60 min old\nforce  → hard cooldown 5 min\n(protects Gemini quota)
+
+alt Cache fresh (or cooldown active on force)
+    FastAPI-->Frontend: 200 cached alerts\n(+ _cache_note if cooldown)
+end
+
+FastAPI->FastAPI: Build context:\n- appliances → {power_kw, run_time_min,\n  heat_generator: bool}\n- next 12h HVAC schedule summary\n- next 12h weather forecast
+
+FastAPI->Gemini: POST appliance prompt:\n"Optimise schedules: avoid heat-generators\nduring cooling, prefer off-peak windows\n(02-04h, 10-12h), stagger high-power loads,\ndo not schedule in the past"
+
+Gemini-->FastAPI: {appliance_schedules:\n [{appliance, optimal_start, end,\n  duration_min, power_kw, cost,\n  priority, reason, alert_message}],\nalerts:[{type, message}]}
+
+FastAPI->FastAPI: Attach generated_date + generated_time\n(used by TTL cache check)
+
+FastAPI->SQLite: UPDATE user_thermostat\nSET appliance_alerts = JSON(result)
+SQLite-->FastAPI: OK
+
+FastAPI-->Frontend: 200 {appliance_schedules,\nalerts, generated_date, generated_time}

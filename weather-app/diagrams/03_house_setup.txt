@@ -1,0 +1,25 @@
+title 3. House Setup + Initial Simulation State
+
+participant Frontend
+participant FastAPI
+participant SQLite
+
+Frontend->FastAPI: POST /house_variables\n{username, home_size, insulation_quality,\nhvac_type, personal_comfort,\noccupancy, appliances:[...]}
+
+FastAPI->SQLite: UPDATE users\nSET user_house = JSON({data, appliances})\nWHERE username = ?
+SQLite-->FastAPI: OK
+
+FastAPI->SQLite: SELECT sim_inside_temp\nFROM user_thermostat WHERE user_id = ?
+SQLite-->FastAPI: null (first submission)
+
+FastAPI->SQLite: SELECT user_weather\nFROM users WHERE username = ?
+SQLite-->FastAPI: weather rows
+
+FastAPI->FastAPI: initial_temp = first weather row\ntemperature_2m (fallback: 70°F)
+
+FastAPI->SQLite: INSERT INTO user_thermostat\n(user_id, sim_inside_temp)\nON CONFLICT DO UPDATE
+SQLite-->FastAPI: OK
+
+FastAPI-->Frontend: 200 {status:"ok", saved:"db"}
+
+note over Frontend,SQLite: This is the only time user_thermostat\nis initialised. All future simulation\nsteps UPDATE this row.
