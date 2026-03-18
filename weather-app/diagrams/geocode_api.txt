@@ -1,0 +1,19 @@
+title Geocode — Address to Coordinates (Geoapify)
+ 
+participant Frontend
+participant FastAPI
+participant Geoapify API
+ 
+Frontend->FastAPI: GET /geocode?address=M5V2T6
+ 
+FastAPI->FastAPI: Read GEOAPIFY_KEY\nfrom environment
+ 
+Geoapify API<-FastAPI: GET /v1/geocode/search\n?text=M5V2T6\n&format=json\n&apiKey={KEY}\n(timeout 10s)
+ 
+note over Geoapify API: Free tier: 3,000 req/day\nOne call per user login
+ 
+Geoapify API-->FastAPI: {results:[{\nlat: 43.6448,\nlon: -79.3883,\nformatted: "Toronto, ON"\n}]}
+ 
+FastAPI-->Frontend: 200 {lat, lon, formatted}
+ 
+note over FastAPI: Key not configured → 500\nNo results found → 404\nService timeout → 502

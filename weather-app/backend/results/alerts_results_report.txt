@@ -1,0 +1,233 @@
+====================================================================================
+  HVAC Capstone — Appliance Alert Model Test Report
+  Generated : 2026-03-17 17:22:29
+  Gemini    : ✓ LIVE — real Gemini responses
+====================================================================================
+
+────────────────────────────────────────────────────────────────────────────────────
+  SECTION 1 — What is being tested
+────────────────────────────────────────────────────────────────────────────────────
+
+  The appliance scheduling model (build_genai_prompt → Gemini) is called
+  directly, bypassing the database layer. Each scenario provides a realistic
+  set of appliances, an HVAC schedule, and weather forecast. 10 rule-based
+  validation checks are run on every response.
+
+  Scenarios cover: winter on-peak heating, summer cooling with heat-generator
+  ban, off-peak night with EV charger, shoulder-season midday, and a full
+  evening house load during on-peak heating.
+
+  Validation checks:
+    V1    Valid JSON structure
+    V2    All appliances covered
+    V3    No past start times
+    V4    Heat-generators avoid cooling
+    V5    High-power loads staggered
+    V6    Cost calculations plausible
+    V7    Priority field valid
+    V8    EV charger off-peak
+    V9    Durations reasonable
+    V10   Alert messages present
+
+────────────────────────────────────────────────────────────────────────────────────
+  SECTION 2 — Scenario Results
+────────────────────────────────────────────────────────────────────────────────────
+
+  ◆ winter_morning_peak  [GENAI]  9/10 checks  ✗ 1 FAIL  latency=30.77s
+    Winter weekday 08:00 — on-peak, HVAC heating, full appliance set
+    Hour=08:00  TOU=0.182/kWh (on-peak)
+    T_in=20.0°C → setpoint 22.0°C
+    Appliances tested: 10
+    HVAC cooling hours: none (no active cooling)
+
+    Schedules returned: 10  |  Alerts returned: 3
+
+    Check  Name                                 Result  Detail
+    ────────────────────────────────────────────────────────────────────────────────
+    V1     Valid JSON structure                      ✓  appliance_schedules=list, alerts=list
+    V2     All appliances covered                    ✓  All 10 covered
+    V3     No past start times                       ✓  All start times >= 08:00
+    V4     Heat-generators avoid cooling windows        ✓  No cooling windows
+    V5     High-power appliances staggered           ✓  No stacking detected
+    V6     Cost calculations plausible (±50%)        ✓  All costs within range
+    V7     Priority field is valid                   ✓  All priorities valid
+    V8     EV charger scheduled off-peak             ✗  EV at 10:00 (NOT off-peak ✗)
+    V9     Durations within 50–200% of expected        ✓  All durations reasonable
+    V10    Alert messages present                    ✓  3 alerts
+
+    Schedule preview (first 3 entries):
+    Appliance                                    Start     End   Dur     Cost  Priority
+    ────────────────────────────────────────────────────────────────────────────────
+    Electric Space Heater                        10:00   12:00   120   $0.450  low
+    Portable Air Conditioner                       N/A     N/A     0   $0.000  low
+    Electric Water Heater                        12:30   13:00    30   $0.340  medium
+    ... and 7 more
+
+  ◆ summer_afternoon_peak  [GENAI]  8/10 checks  ✗ 2 FAIL  latency=24.02s
+    Summer afternoon 14:00 — mid-peak, HVAC active cooling, heat-generators banned
+    Hour=14:00  TOU=0.122/kWh (mid-peak)
+    T_in=26.0°C → setpoint 22.0°C
+    Appliances tested: 5
+    HVAC cooling hours: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+
+    Schedules returned: 5  |  Alerts returned: 2
+
+    Check  Name                                 Result  Detail
+    ────────────────────────────────────────────────────────────────────────────────
+    V1     Valid JSON structure                      ✓  appliance_schedules=list, alerts=list
+    V2     All appliances covered                    ✗  Missing: ['Clothes Dryer (Electric or Gas)', 
+    V3     No past start times                       ✓  All start times >= 14:00
+    V4     Heat-generators avoid cooling windows        ✓  Rule respected
+    V5     High-power appliances staggered           ✓  No stacking detected
+    V6     Cost calculations plausible (±50%)        ✓  All costs within range
+    V7     Priority field is valid                   ✓  All priorities valid
+    V8     EV charger scheduled off-peak             ✗  EV not found in schedule
+    V9     Durations within 50–200% of expected        ✓  All durations reasonable
+    V10    Alert messages present                    ✓  2 alerts
+
+    Schedule preview (first 3 entries):
+    Appliance                                    Start     End   Dur     Cost  Priority
+    ────────────────────────────────────────────────────────────────────────────────
+    Electric Vehicle Charger                     20:00   04:00   480   $8.640  high
+    Washing Machine                              20:00   20:45    45   $0.060  medium
+    Clothes Dryer                                21:00   22:00    60   $0.450  medium
+    ... and 2 more
+
+  ◆ offpeak_night  [GENAI]  7/10 checks  ✗ 3 FAIL  latency=24.63s
+    Late evening 22:00 — off-peak, HVAC off, best window for heavy loads
+    Hour=22:00  TOU=0.087/kWh (off-peak)
+    T_in=22.0°C → setpoint 22.0°C
+    Appliances tested: 5
+    HVAC cooling hours: none (no active cooling)
+
+    Schedules returned: 5  |  Alerts returned: 2
+
+    Check  Name                                 Result  Detail
+    ────────────────────────────────────────────────────────────────────────────────
+    V1     Valid JSON structure                      ✓  appliance_schedules=list, alerts=list
+    V2     All appliances covered                    ✗  Missing: ['Electric Vehicle Charger (Level 1 
+    V3     No past start times                       ✗  Past times: ['Electric Water Heater @ 06:00',
+    V4     Heat-generators avoid cooling windows        ✓  No cooling windows
+    V5     High-power appliances staggered           ✓  No stacking detected
+    V6     Cost calculations plausible (±50%)        ✓  All costs within range
+    V7     Priority field is valid                   ✓  All priorities valid
+    V8     EV charger scheduled off-peak             ✗  EV not found in schedule
+    V9     Durations within 50–200% of expected        ✓  All durations reasonable
+    V10    Alert messages present                    ✓  2 alerts
+
+    Schedule preview (first 3 entries):
+    Appliance                                    Start     End   Dur     Cost  Priority
+    ────────────────────────────────────────────────────────────────────────────────
+    Electric Vehicle Charger                     22:00   06:00   480   $8.640  high
+    Washing Machine                              22:00   22:45    45   $0.060  medium
+    Electric Water Heater                        06:00   06:30    30   $0.340  medium
+    ... and 2 more
+
+  ◆ shoulder_midday  [GENAI]  9/10 checks  ✗ 1 FAIL  latency=16.7s
+    Shoulder season 11:00 — mid-peak, minimal HVAC, mixed appliances
+    Hour=11:00  TOU=0.122/kWh (mid-peak)
+    T_in=21.0°C → setpoint 22.0°C
+    Appliances tested: 5
+    HVAC cooling hours: none (no active cooling)
+
+    Schedules returned: 5  |  Alerts returned: 1
+
+    Check  Name                                 Result  Detail
+    ────────────────────────────────────────────────────────────────────────────────
+    V1     Valid JSON structure                      ✓  appliance_schedules=list, alerts=list
+    V2     All appliances covered                    ✗  Missing: ['Oven (Electric or Gas)', 'Stove / 
+    V3     No past start times                       ✓  All start times >= 11:00
+    V4     Heat-generators avoid cooling windows        ✓  No cooling windows
+    V5     High-power appliances staggered           ✓  No stacking detected
+    V6     Cost calculations plausible (±50%)        ✓  All costs within range
+    V7     Priority field is valid                   ✓  All priorities valid
+    V8     EV charger scheduled off-peak             ✓  N/A — no EV in scenario
+    V9     Durations within 50–200% of expected        ✓  All durations reasonable
+    V10    Alert messages present                    ✓  1 alerts
+
+    Schedule preview (first 3 entries):
+    Appliance                                    Start     End   Dur     Cost  Priority
+    ────────────────────────────────────────────────────────────────────────────────
+    Washing Machine                              11:00   11:45    45   $0.060  medium
+    Gas Water Heater                             12:00   12:30    30   $0.020  low
+    Oven                                         18:00   19:00    60   $0.380  high
+    ... and 2 more
+
+  ◆ full_house_evening  [GENAI]  8/10 checks  ✗ 2 FAIL  latency=21.14s
+    Full house load 17:00 — on-peak, heating starting, all high-power appliances
+    Hour=17:00  TOU=0.182/kWh (on-peak)
+    T_in=20.5°C → setpoint 22.0°C
+    Appliances tested: 6
+    HVAC cooling hours: none (no active cooling)
+
+    Schedules returned: 6  |  Alerts returned: 3
+
+    Check  Name                                 Result  Detail
+    ────────────────────────────────────────────────────────────────────────────────
+    V1     Valid JSON structure                      ✓  appliance_schedules=list, alerts=list
+    V2     All appliances covered                    ✗  Missing: ['Clothes Dryer (Electric or Gas)', 
+    V3     No past start times                       ✓  All start times >= 17:00
+    V4     Heat-generators avoid cooling windows        ✓  No cooling windows
+    V5     High-power appliances staggered           ✓  No stacking detected
+    V6     Cost calculations plausible (±50%)        ✓  All costs within range
+    V7     Priority field is valid                   ✓  All priorities valid
+    V8     EV charger scheduled off-peak             ✗  EV not found in schedule
+    V9     Durations within 50–200% of expected        ✓  All durations reasonable
+    V10    Alert messages present                    ✓  3 alerts
+
+    Schedule preview (first 3 entries):
+    Appliance                                    Start     End   Dur     Cost  Priority
+    ────────────────────────────────────────────────────────────────────────────────
+    Clothes Dryer                                17:00   18:00    60   $0.450  medium
+    Dishwasher                                   18:00   19:30    90   $0.410  medium
+    Oven                                         19:00   20:00    60   $0.380  medium
+    ... and 3 more
+
+
+────────────────────────────────────────────────────────────────────────────────────
+  SECTION 3 — Check-by-Check Summary
+────────────────────────────────────────────────────────────────────────────────────
+
+  Check  Name                                winter_morni  summer_after  offpeak_nigh  shoulder_mid  full_house_e
+  ──────────────────────────────────────────────────────────────────────────────────
+  V1     Valid JSON structure                           ✓             ✓             ✓             ✓             ✓
+  V2     All appliances covered                         ✓             ✗             ✗             ✗             ✗
+  V3     No past start times                            ✓             ✓             ✗             ✓             ✓
+  V4     Heat-generators avoid cooling                  ✓             ✓             ✓             ✓             ✓
+  V5     High-power loads staggered                     ✓             ✓             ✓             ✓             ✓
+  V6     Cost calculations plausible                    ✓             ✓             ✓             ✓             ✓
+  V7     Priority field valid                           ✓             ✓             ✓             ✓             ✓
+  V8     EV charger off-peak                            ✗             ✗             ✗             ✓             ✗
+  V9     Durations reasonable                           ✓             ✓             ✓             ✓             ✓
+  V10    Alert messages present                         ✓             ✓             ✓             ✓             ✓
+
+  Legend: ✓ = pass   ✗ = fail   N/A = Gemini unavailable
+
+────────────────────────────────────────────────────────────────────────────────────
+  SECTION 4 — Overall Summary
+────────────────────────────────────────────────────────────────────────────────────
+
+  Scenarios run          : 5
+  Gemini answered        : 5 / 5
+  Scenarios all-pass     : 0 / 5
+  Total checks passed    : 41 / 50
+  Avg latency            : 23.45 s
+
+  Check  Name                                  Pass rate
+  ──────────────────────────────────────────────────────────────────────────────────
+  V1     Valid JSON structure                  5/5  ████████████████████
+  V2     All appliances covered                1/5  ████░░░░░░░░░░░░░░░░
+  V3     No past start times                   4/5  ████████████████░░░░
+  V4     Heat-generators avoid cooling         5/5  ████████████████████
+  V5     High-power loads staggered            5/5  ████████████████████
+  V6     Cost calculations plausible           5/5  ████████████████████
+  V7     Priority field valid                  5/5  ████████████████████
+  V8     EV charger off-peak                   1/5  ████░░░░░░░░░░░░░░░░
+  V9     Durations reasonable                  5/5  ████████████████████
+  V10    Alert messages present                5/5  ████████████████████
+
+  Overall pass rate: 41/50 (82%)
+
+====================================================================================
+  Gemini live: YES   Scenarios: 5   Checks passed: 41/50   Avg latency: 23.45s
+====================================================================================
