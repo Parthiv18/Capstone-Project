@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: ./backend/Dockerfile
+    image: capstonehvacapp.azurecr.io/weather-backend:latest
     ports:
       - "8000:8000"
     environment:
@@ -20,6 +21,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    image: capstonehvacapp.azurecr.io/weather-frontend:latest
     ports:
       - "3000:3000"
     environment:
